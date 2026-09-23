@@ -1,0 +1,19 @@
+version = 0.1
+
+[dev.deploy.parameters]
+stack_name = "resume-screener-dev"
+region = "ap-south-1"
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+resolve_s3 = true
+resolve_image_repos = true
+parameter_overrides = "EnvName=dev SesSenderAddress=parth.choutapelly@gmail.com CreateBudget=false"
+confirm_changeset = true
+
+[prod.deploy.parameters]
+stack_name = "resume-screener-prod"
+region = "ap-south-1"
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+resolve_s3 = true
+resolve_image_repos = true
+parameter_overrides = "EnvName=prod SesSenderAddress=parth.choutapelly@gmail.com CreateBudget=false"
+confirm_changeset = true

@@ -1,0 +1,508 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  AI-Powered Resume Screener & Talent Acquisition Pipeline.
+  Phase 1: infrastructure scaffold only — storage, database, queues, auth,
+  hosting, alerting, and 14 stub Lambda functions (all return 501). No
+  business logic. See docs/01-infrastructure-setup.md.
+
+Parameters:
+  EnvName:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  SesSenderAddress:
+    Type: String
+    Description: SES-verified sender address for shortlist emails (T-004).
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: Optional email to subscribe to AlertsTopic.
+  CreateBudget:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >
+      Budgets are account-wide, not stack-scoped — set true in at most ONE
+      stack in this account. Defaults to false since this account already
+      has an account-wide budget alert from another project.
+  BudgetAmountUsd:
+    Type: Number
+    Default: 10
+
+Conditions:
+  # IsDev removed for now — only used by the CORS !If restored alongside
+  # CloudFront (template-web-hosting.yaml.deferred). Add back as:
+  #   IsDev: !Equals [!Ref EnvName, dev]
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+  MakeBudget: !Equals [!Ref CreateBudget, "true"]
+
+Globals:
+  Function:
+    Architectures: [x86_64]
+    Timeout: 10
+    MemorySize: 256
+    LoggingConfig:
+      LogFormat: JSON
+    Environment:
+      Variables:
+        ENV: !Ref EnvName
+        LOG_LEVEL: INFO
+
+Resources:
+  # ---------------------------------------------------------------------
+  # S3 — upload bucket (JDs, resumes, exports)
+  # ---------------------------------------------------------------------
+  UploadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub resume-screener-${EnvName}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          # TEMPORARY (see infra/README.md "CloudFront deferred"): the real origin is
+          # ${WebDistribution.DomainName}, but WebDistribution/WebBucket are commented
+          # out below pending AWS account verification for CloudFront. Restore the
+          # !If [IsDev, [cloudfront, localhost], [cloudfront]] form once re-added.
+          - AllowedMethods: [POST, GET]
+            AllowedOrigins: ["http://localhost:5173"]
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-exports
+            Status: Enabled
+            Prefix: exports/
+            ExpirationInDays: 7
+          - Id: expire-jds
+            Status: Enabled
+            Prefix: jd-uploads/
+            ExpirationInDays: 180
+          - Id: expire-resumes
+            Status: Enabled
+            Prefix: resume-uploads/
+            ExpirationInDays: 180
+      # NotificationConfiguration is added in phase 2 (T-038), once the
+      # extraction consumer exists — avoids a circular dependency.
+
+  UploadBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref UploadBucket
+      PolicyDocument:
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt UploadBucket.Arn
+              - !Sub "${UploadBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+  # ---------------------------------------------------------------------
+  # CloudFront deferred (infra/README.md "CloudFront deferred"): AWS returned
+  # "Access denied ... Your account must be verified before you can add new
+  # CloudFront resources" on WebDistribution, which rolled back the whole
+  # stack. WebBucket/WebOAC/WebHeadersPolicy/WebDistribution/WebBucketPolicy
+  # are saved in template-web-hosting.yaml.deferred — paste them back here
+  # (and restore the two Outputs + UploadBucket CORS origin) once AWS Support
+  # verifies the account. Not needed until phase 4 (frontend) regardless.
+  # ---------------------------------------------------------------------
+  # DynamoDB
+  # ---------------------------------------------------------------------
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub jobs-${EnvName}
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: {SSEEnabled: true}
+      AttributeDefinitions:
+        - {AttributeName: job_id, AttributeType: S}
+        - {AttributeName: recruiter_id, AttributeType: S}
+        - {AttributeName: created_at, AttributeType: S}
+      KeySchema:
+        - {AttributeName: job_id, KeyType: HASH}
+      GlobalSecondaryIndexes:
+        - IndexName: RecruiterJobsIndex
+          KeySchema:
+            - {AttributeName: recruiter_id, KeyType: HASH}
+            - {AttributeName: created_at, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+
+  CandidatesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub candidates-${EnvName}
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: {SSEEnabled: true}
+      AttributeDefinitions:
+        - {AttributeName: job_id, AttributeType: S}
+        - {AttributeName: candidate_id, AttributeType: S}
+      KeySchema:
+        - {AttributeName: job_id, KeyType: HASH}
+        - {AttributeName: candidate_id, KeyType: RANGE}
+      # No GSI — JobScoreIndex removed (D-16): a sparse index hid unscored
+      # rows. getCandidatesByJob uses a base-table Query + in-Lambda sort.
+
+  FailedJobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub failed_jobs-${EnvName}
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: {SSEEnabled: true}
+      AttributeDefinitions:
+        - {AttributeName: job_id, AttributeType: S}
+        - {AttributeName: failure_id, AttributeType: S}
+      KeySchema:
+        - {AttributeName: job_id, KeyType: HASH}
+        - {AttributeName: failure_id, KeyType: RANGE}
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  ConfigTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub config-${EnvName}
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: {SSEEnabled: true}
+      AttributeDefinitions:
+        - {AttributeName: config_key, AttributeType: S}
+      KeySchema:
+        - {AttributeName: config_key, KeyType: HASH}
+
+  # ---------------------------------------------------------------------
+  # SQS — ingestion + scoring, each with a DLQ
+  # ---------------------------------------------------------------------
+  IngestionDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub rs-ingestion-dlq-${EnvName}
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  ScoringDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub rs-scoring-dlq-${EnvName}
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  IngestionQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub rs-ingestion-${EnvName}
+      VisibilityTimeout: 720  # 6x ExtractionFunction's 120s timeout
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt IngestionDLQ.Arn
+        maxReceiveCount: 3
+
+  ScoringQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub rs-scoring-${EnvName}
+      VisibilityTimeout: 60  # 6x scoreMatch's 10s timeout
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ScoringDLQ.Arn
+        maxReceiveCount: 5
+
+  IngestionQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref IngestionQueue]
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt IngestionQueue.Arn
+            Condition:
+              ArnEquals:
+                "aws:SourceArn": !Sub "arn:aws:s3:::resume-screener-${EnvName}-${AWS::AccountId}"
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+
+  # ---------------------------------------------------------------------
+  # Cognito
+  # ---------------------------------------------------------------------
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub resume-screener-users-${EnvName}
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - {Name: admin_only, Priority: 1}
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          TemporaryPasswordValidityDays: 7
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub resume-screener-web-${EnvName}
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      IdTokenValidity: 60
+      AccessTokenValidity: 60
+      RefreshTokenValidity: 7
+      TokenValidityUnits:
+        IdToken: minutes
+        AccessToken: minutes
+        RefreshToken: days
+
+  RecruiterGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: {UserPoolId: !Ref UserPool, GroupName: Recruiter}
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: {UserPoolId: !Ref UserPool, GroupName: Admin}
+
+  # ---------------------------------------------------------------------
+  # SNS + Budget (alarms themselves are added in phase 3)
+  # ---------------------------------------------------------------------
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub rs-alerts-${EnvName}
+      Subscription: !If
+        - HasAlertEmail
+        - [{Protocol: email, Endpoint: !Ref AlertEmail}]
+        - !Ref AWS::NoValue
+
+  AlertsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref AlertsTopic]
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [budgets.amazonaws.com, cloudwatch.amazonaws.com]
+            Action: sns:Publish
+            Resource: !Ref AlertsTopic
+
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Condition: MakeBudget
+    Properties:
+      Budget:
+        BudgetName: resume-screener-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: {Amount: !Ref BudgetAmountUsd, Unit: USD}
+      NotificationsWithSubscribers:
+        - Notification: {NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE}
+          Subscribers: [{SubscriptionType: SNS, Address: !Ref AlertsTopic}]
+        - Notification: {NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE}
+          Subscribers: [{SubscriptionType: SNS, Address: !Ref AlertsTopic}]
+
+  # ---------------------------------------------------------------------
+  # Lambda — 14 stub functions (all 501; no Events/Policies/Layers yet)
+  # ---------------------------------------------------------------------
+  ExtractionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-extraction-${EnvName}
+      PackageType: Image
+      Timeout: 120
+      MemorySize: 1536
+      EphemeralStorage: {Size: 1024}
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ./backend/ingestion/extraction
+      DockerTag: python3.12-v1
+  ExtractionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-extraction-${EnvName}", RetentionInDays: 30}
+
+  NlpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-nlp-${EnvName}
+      CodeUri: backend/ingestion/nlp/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+      Timeout: 30
+      MemorySize: 1024
+  NlpLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-nlp-${EnvName}", RetentionInDays: 30}
+
+  ScoreMatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-score-match-${EnvName}
+      CodeUri: backend/scoring/score_match/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 256
+  ScoreMatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-score-match-${EnvName}", RetentionInDays: 30}
+
+  CreateJobPostingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-create-job-posting-${EnvName}
+      CodeUri: backend/api/create_job_posting/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+  CreateJobPostingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-create-job-posting-${EnvName}", RetentionInDays: 30}
+
+  AddResumesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-add-resumes-${EnvName}
+      CodeUri: backend/api/add_resumes/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+  AddResumesLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-add-resumes-${EnvName}", RetentionInDays: 30}
+
+  GetJobsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-get-jobs-${EnvName}
+      CodeUri: backend/api/get_jobs/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+  GetJobsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-get-jobs-${EnvName}", RetentionInDays: 30}
+
+  GetJobFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-get-job-${EnvName}
+      CodeUri: backend/api/get_job/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+  GetJobLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-get-job-${EnvName}", RetentionInDays: 30}
+
+  UpdateJobFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-update-job-${EnvName}
+      CodeUri: backend/api/update_job/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+  UpdateJobLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-update-job-${EnvName}", RetentionInDays: 30}
+
+  GetCandidatesByJobFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-get-candidates-by-job-${EnvName}
+      CodeUri: backend/api/get_candidates_by_job/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+  GetCandidatesByJobLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-get-candidates-by-job-${EnvName}", RetentionInDays: 30}
+
+  UpdateCandidateDecisionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-update-candidate-decision-${EnvName}
+      CodeUri: backend/api/update_candidate_decision/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+  UpdateCandidateDecisionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-update-candidate-decision-${EnvName}", RetentionInDays: 30}
+
+  GetResumeUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-get-resume-url-${EnvName}
+      CodeUri: backend/api/get_resume_url/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+  GetResumeUrlLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-get-resume-url-${EnvName}", RetentionInDays: 30}
+
+  ExportShortlistCsvFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-export-shortlist-csv-${EnvName}
+      CodeUri: backend/api/export_shortlist_csv/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+  ExportShortlistCsvLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-export-shortlist-csv-${EnvName}", RetentionInDays: 30}
+
+  GetFailedJobsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-get-failed-jobs-${EnvName}
+      CodeUri: backend/api/get_failed_jobs/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+  GetFailedJobsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-get-failed-jobs-${EnvName}", RetentionInDays: 30}
+
+  DlqHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub rs-dlq-handler-${EnvName}
+      CodeUri: backend/reliability/dlq_handler/
+      Handler: handler.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+  DlqHandlerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties: {LogGroupName: !Sub "/aws/lambda/rs-dlq-handler-${EnvName}", RetentionInDays: 30}
+
+Outputs:
+  UploadBucketName: {Value: !Ref UploadBucket}
+  # WebBucketName / DistributionId / DistributionDomain: restored with
+  # template-web-hosting.yaml.deferred once CloudFront is unblocked.
+  JobsTableName: {Value: !Ref JobsTable}
+  CandidatesTableName: {Value: !Ref CandidatesTable}
+  FailedJobsTableName: {Value: !Ref FailedJobsTable}
+  ConfigTableName: {Value: !Ref ConfigTable}
+  IngestionQueueUrl: {Value: !Ref IngestionQueue}
+  ScoringQueueUrl: {Value: !Ref ScoringQueue}
+  UserPoolId: {Value: !Ref UserPool}
+  UserPoolClientId: {Value: !Ref UserPoolClient}
+  AlertsTopicArn: {Value: !Ref AlertsTopic}

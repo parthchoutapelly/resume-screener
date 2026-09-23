@@ -1,0 +1,120 @@
+{
+  "alice_johnson_native.pdf": {
+    "email": "alice.johnson@example-mail.test",
+    "name": "Alice Johnson",
+    "skills": [
+      "python",
+      "aws",
+      "dynamodb",
+      "kubernetes",
+      "ci/cd",
+      "sql"
+    ],
+    "titles_held": [
+      "senior backend engineer",
+      "software engineer"
+    ],
+    "total_experience_years_approx": 6.9
+  },
+  "blank_scan.pdf": {
+    "expected_error_code": "unreadable_document"
+  },
+  "bob_kumar.docx": {
+    "email": "bob.kumar@example-mail.test",
+    "name": "Bob Kumar",
+    "skills": [
+      "python",
+      "aws",
+      "docker",
+      "rest api",
+      "git"
+    ],
+    "titles_held": [
+      "backend developer"
+    ],
+    "total_experience_years_approx": 4.0
+  },
+  "carol_singh.docx": {
+    "email": "carol.singh@example-mail.test",
+    "name": "Carol Singh",
+    "skills": [
+      "python",
+      "flask",
+      "react",
+      "aws",
+      "javascript"
+    ],
+    "titles_held": [
+      "software engineer"
+    ],
+    "total_experience_years_approx": null
+  },
+  "corrupt.pdf": {
+    "expected_error_code": "unreadable_document"
+  },
+  "daniel_kim_scanned.pdf": {
+    "email": "daniel.kim@example-mail.test",
+    "name": "Daniel Kim",
+    "notes": "OCR fixture \u2014 text quality depends on Tesseract render/recognition.",
+    "skills": [
+      "python",
+      "aws",
+      "dynamodb",
+      "sql"
+    ],
+    "titles_held": [
+      "backend engineer"
+    ],
+    "total_experience_years_approx": 4.8
+  },
+  "eleven_pages.pdf": {
+    "expected_error_code": "too_many_pages"
+  },
+  "jordan_rivera.png": {
+    "email": "jordan.rivera@example-mail.test",
+    "name": "Jordan Rivera",
+    "notes": "Standalone image fixture (OCR path, no PDF wrapper).",
+    "skills": [
+      "python",
+      "aws",
+      "sql",
+      "git"
+    ],
+    "titles_held": [
+      "software engineer"
+    ],
+    "total_experience_years_approx": 2.8
+  },
+  "maya_bennett_mixed.pdf": {
+    "email": "maya.bennett@example-mail.test",
+    "name": "Maya Bennett",
+    "notes": "Mixed PDF \u2014 page 1 native, page 2 scanned image only.",
+    "skills": [
+      "python",
+      "aws",
+      "dynamodb",
+      "kubernetes"
+    ],
+    "titles_held": [
+      "backend engineer"
+    ],
+    "total_experience_years_approx": 5.9
+  },
+  "renamed_text_file.pdf": {
+    "expected_error_code": "unsupported_format"
+  },
+  "worked_example_native.pdf": {
+    "email": "jane.doe@example-mail.test",
+    "name": "Jane Doe",
+    "notes": "Fixture pinned to score 71.3 against backend_engineer_jd (see comment in generator).",
+    "skills": [
+      "python",
+      "aws",
+      "sql"
+    ],
+    "titles_held": [
+      "backend developer"
+    ],
+    "total_experience_years_approx": 4.0
+  }
+}

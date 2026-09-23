@@ -1,0 +1,2 @@
+# Empty in phase 1 — this is a stub image. Real dependencies (pypdf, PyMuPDF,
+# python-docx, pytesseract, Pillow) are pinned in phase 2 (docs/02-ingestion-pipeline.md §6.1).

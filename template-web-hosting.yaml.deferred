@@ -1,0 +1,126 @@
+# DEFERRED — CloudFront + web bucket resources, temporarily pulled out of
+# template.yaml (see infra/README.md "CloudFront deferred" for why and the
+# restore steps). Not a real SAM/CloudFormation file on its own — this is a
+# Resources: fragment to paste back into template.yaml once AWS Support has
+# verified the account for CloudFront.
+#
+# When restoring:
+#   1. Paste this whole Resources: block back into template.yaml in place of
+#      the "# CloudFront deferred" marker comment.
+#   2. Restore UploadBucket's CorsConfiguration to the !If [IsDev, ...] form
+#      referencing ${WebDistribution.DomainName} (see the comment left at that
+#      spot in template.yaml).
+#   3. Restore the WebBucketName / DistributionId / DistributionDomain entries
+#      in Outputs.
+#   4. sam build --use-container && sam deploy --config-env dev
+
+Resources:
+  WebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub resume-screener-web-${EnvName}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  WebOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub rs-web-oac-${EnvName}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  WebHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub rs-web-headers-${EnvName}
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: same-origin
+            Override: true
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: !Sub >-
+              default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';
+              connect-src 'self' https://*.execute-api.${AWS::Region}.amazonaws.com
+              https://cognito-idp.${AWS::Region}.amazonaws.com
+              https://*.s3.${AWS::Region}.amazonaws.com https://*.s3.amazonaws.com;
+              frame-ancestors 'none'
+
+  WebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_200
+        Origins:
+          - Id: web
+            DomainName: !GetAtt WebBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt WebOAC.Id
+        DefaultCacheBehavior:
+          TargetOriginId: web
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
+          ResponseHeadersPolicyId: !Ref WebHeadersPolicy
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${WebBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}"
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt WebBucket.Arn
+              - !Sub "${WebBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+Outputs:
+  WebBucketName: {Value: !Ref WebBucket}
+  DistributionId: {Value: !Ref WebDistribution}
+  DistributionDomain: {Value: !GetAtt WebDistribution.DomainName}

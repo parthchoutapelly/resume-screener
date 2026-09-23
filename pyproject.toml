@@ -1,0 +1,30 @@
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+src = ["backend/layers/common_layer/python", "backend"]
+exclude = ["frontend", ".aws-sam"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 110
+target-version = ["py312"]
+extend-exclude = "frontend|\\.aws-sam"
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/component"]
+pythonpath = ["backend/layers/common_layer/python"]
+
+[tool.coverage.run]
+source = ["rs_common"]
+branch = true
+
+[tool.coverage.report]
+# No fail_under here: rs_common doesn't exist until phase 2 (docs/02-ingestion-pipeline.md),
+# so a hard threshold would fail `make test` on the phase 1 scaffold for no reason.
+# The real 90% gate is docs/Tasks.md T-100 / docs/05-integration-testing-and-delivery.md §1,
+# enforced explicitly there via `pytest --cov=rs_common --cov-fail-under=90`.
+show_missing = true
+skip_covered = false
