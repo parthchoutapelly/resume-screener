@@ -55,6 +55,7 @@ Resources:
   # ---------------------------------------------------------------------
   UploadBucket:
     Type: AWS::S3::Bucket
+    DependsOn: IngestionQueuePolicy  # no cycle: the policy references the bucket by name string, not !Ref
     Properties:
       BucketName: !Sub resume-screener-${EnvName}-${AWS::AccountId}
       PublicAccessBlockConfiguration:
@@ -93,8 +94,15 @@ Resources:
             Status: Enabled
             Prefix: resume-uploads/
             ExpirationInDays: 180
-      # NotificationConfiguration is added in phase 2 (T-038), once the
-      # extraction consumer exists — avoids a circular dependency.
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt IngestionQueue.Arn
+            Filter: {S3Key: {Rules: [{Name: prefix, Value: jd-uploads/}]}}
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt IngestionQueue.Arn
+            Filter: {S3Key: {Rules: [{Name: prefix, Value: resume-uploads/}]}}
+        # exports/ is intentionally not wired.
 
   UploadBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -336,10 +344,42 @@ Resources:
       Timeout: 120
       MemorySize: 1536
       EphemeralStorage: {Size: 1024}
+      Environment:
+        Variables:
+          NLP_FUNCTION_NAME: !Ref NlpFunction
+          JOBS_TABLE: !Ref JobsTable
+          CANDIDATES_TABLE: !Ref CandidatesTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource:
+                - !Sub "${UploadBucket.Arn}/jd-uploads/*"
+                - !Sub "${UploadBucket.Arn}/resume-uploads/*"
+            - Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: [!GetAtt JobsTable.Arn, !GetAtt CandidatesTable.Arn]
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt FailedJobsTable.Arn
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !GetAtt NlpFunction.Arn
+      Events:
+        Ingestion:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt IngestionQueue.Arn
+            BatchSize: 1
+            ScalingConfig: {MaximumConcurrency: 3}  # D-25
     Metadata:
-      Dockerfile: Dockerfile
-      DockerContext: ./backend/ingestion/extraction
-      DockerTag: python3.12-v1
+      # Docker context is ./backend (not this directory), so the image can
+      # COPY rs_common directly — container functions can't use layers
+      # (docs/02-ingestion-pipeline.md §6.1).
+      Dockerfile: ingestion/extraction/Dockerfile
+      DockerContext: ./backend
+      DockerTag: python3.12-v2
   ExtractionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-extraction-${EnvName}", RetentionInDays: 30}
@@ -348,14 +388,55 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub rs-nlp-${EnvName}
-      CodeUri: backend/ingestion/nlp/
-      Handler: handler.lambda_handler
-      Runtime: python3.12
-      Timeout: 30
-      MemorySize: 1024
+      # PackageType: Image, not zip+layers — D-56 (docs/Memory.md): the real
+      # built NlpLayer measured 310 MB unzipped (over Lambda's 250 MB
+      # function+layers combined limit). This is D-03's own pre-agreed
+      # fallback ("NLP exceeds 250 MB -> then NLP -> image"), the same
+      # pattern ExtractionFunction already uses. No native-binary dependency
+      # here, so it uses the official AWS Lambda Python base image directly.
+      PackageType: Image
+      Timeout: 60  # generous headroom for a container-image cold start loading spaCy
+      MemorySize: 1536
+      Environment:
+        Variables:
+          JOBS_TABLE: !Ref JobsTable
+          CANDIDATES_TABLE: !Ref CandidatesTable
+          CONFIG_TABLE: !Ref ConfigTable
+          SCORING_QUEUE_URL: !Ref ScoringQueue
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: [!GetAtt JobsTable.Arn, !GetAtt CandidatesTable.Arn]
+            - Effect: Allow
+              Action: dynamodb:Query
+              Resource: !GetAtt CandidatesTable.Arn
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt ConfigTable.Arn
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt ScoringQueue.Arn
+      # No Events — invoked only by ExtractionFunction (synchronous lambda:Invoke).
+    Metadata:
+      Dockerfile: ingestion/nlp/Dockerfile
+      DockerContext: ./backend
+      DockerTag: python3.12-v1
   NlpLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-nlp-${EnvName}", RetentionInDays: 30}
+
+  CommonLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub rs-common-${EnvName}
+      ContentUri: backend/
+      CompatibleRuntimes: [python3.12]
+      CompatibleArchitectures: [x86_64]
+    Metadata: {BuildMethod: makefile}
+    # Still used by the zip-packaged phase-3 functions (scoreMatch, the API
+    # routes) — NlpFunction no longer needs it now that it's an image
+    # (container functions can't use layers; rs_common is COPYed directly).
 
   ScoreMatchFunction:
     Type: AWS::Serverless::Function

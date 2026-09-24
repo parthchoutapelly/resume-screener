@@ -1,0 +1,13 @@
+# NLP function dependencies (D-03 revisit trigger fired: the zip NlpLayer
+# measured 310 MB unzipped when actually built for manylinux2014_x86_64 —
+# over Lambda's 250 MB function+layers combined limit. The earlier T-006
+# spike measurement (137 MB) used a plain `pip install` without the
+# --platform/--only-binary constraints the real build uses, so it silently
+# picked different, smaller wheels than what actually gets deployed.
+# Per D-03's pre-agreed fallback, NlpFunction is now a container image
+# instead of zip+layers — see infra/README.md and docs/Memory.md D-56.
+#
+# boto3 comes bundled with the official public.ecr.aws/lambda/python base
+# image, so it isn't listed here (unlike the Debian-based extraction image).
+spacy==3.8.*
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl

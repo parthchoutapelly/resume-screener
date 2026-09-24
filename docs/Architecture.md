@@ -61,11 +61,11 @@ flowchart TD
 | `exportShortlistCsv` | Lambda zip | CSV of `decision=shortlisted`, formula-escaped, presigned GET 5 min | — |
 | `getFailedJobs` | Lambda zip | Admin-only audit listing | — |
 | `documentExtraction` | Lambda image | Download, validate magic bytes/limits, extract text (native/DOCX/OCR per page), invoke NLP, own ingestion failure recording | Understand entities; read dictionaries |
-| `nlpProcessing` | Lambda zip + `CommonLayer` + `NlpLayer` | spaCy NER + PhraseMatcher + experience; write entities; enqueue scoring; JD fan-out | Write `failed_jobs` (D-20); overwrite explicit requirements |
+| `nlpProcessing` | Lambda image (D-56 Δ — was zip + `NlpLayer`) | spaCy NER + PhraseMatcher + experience; write entities; enqueue scoring; JD fan-out | Write `failed_jobs` (D-20); overwrite explicit requirements |
 | `scoreMatch` | Lambda zip + `CommonLayer` | Pure scoring + explanation, conditional write | Retry on "JD not ready" (D-18); read identity fields |
 | `dlqHandler` | Lambda zip | Terminal audit row + conditional status → `error` | Overwrite a `parsed`/`scored` item |
 | `CommonLayer` | Zip layer | `normalization`, dictionaries, `title_families`, `requirements`, `status`, `errors`, `ddb` (Decimal), `log`, `ids`, `clock` | Depend on spaCy |
-| `NlpLayer` | Zip layer | spaCy, `en_core_web_sm`, `python-dateutil` | — |
+| ~~`NlpLayer`~~ | **Removed (D-56 Δ)** | spaCy + model measured 310 MB unzipped for real, over the 250 MB function+layers limit — `nlpProcessing` is a container image instead, copying `rs_common` directly (images can't use layers) | — |
 
 **Why one Lambda per route:** it keeps least-privilege IAM per route (e.g. only `updateCandidateDecision` can send email). The cost is more template boilerplate, which a SAM `Globals` section absorbs.
 
@@ -425,7 +425,7 @@ Every function also gets its own CloudWatch Logs group (explicit `AWS::Logs::Log
 | pytesseract, Pillow | extraction | OCR binding, images | Apache / HPND; set `Image.MAX_IMAGE_PIXELS = 50_000_000` |
 | python-docx | extraction | DOCX | MIT |
 | spaCy 3.x + `en_core_web_sm` | NLP | NER, tokenizer, PhraseMatcher | MIT; layer-size risk (A4) |
-| python-dateutil | NLP | Date parsing | BSD/Apache — **must be in `NlpLayer`** (missing from the original layer build) |
+| python-dateutil | — | Not used — `rs_common.experience` is pure regex/stdlib `datetime` (D-27), no date-parsing library needed | Listed in the original plan as an `NlpLayer` dependency; dropped when that layer was removed (D-56) since nothing imports it |
 | aws-amplify (Auth only) | SPA | Cognito SRP, token refresh | Apache-2.0 |
 | React, Vite, React Router | SPA | UI | MIT |
 

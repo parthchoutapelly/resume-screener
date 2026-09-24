@@ -30,11 +30,20 @@ manual one-time setup steps, and the operational runbook.
 
 ## Status
 
-**Phase 1 (infrastructure) — deployed to `dev`.** All platform spikes run, `resume-screener-dev`
-stack live (4 DynamoDB tables, 4 SQS queues, Cognito pool + test users, SNS, 14 stub Lambda
-functions incl. the real Tesseract-OCR container image), config seeded. CloudFront/frontend
-hosting is deliberately deferred pending an AWS account verification — see `infra/README.md`
-"CloudFront deferred" and "Phase 1 deployment result" for the full checklist and rationale.
+**Phases 1–2 — deployed to `dev` and verified end-to-end on real AWS infrastructure.**
 
-Next: phase 2 (`docs/02-ingestion-pipeline.md`) — `rs_common` shared layer, real document
-extraction, real NLP.
+- **Phase 1 (infrastructure):** `resume-screener-dev` stack live — 4 DynamoDB tables, 4 SQS
+  queues, Cognito pool + test users, SNS, all core Lambda functions. CloudFront/frontend hosting
+  is deliberately deferred pending an AWS account verification (not needed before phase 4) — see
+  `infra/README.md` "CloudFront deferred".
+- **Phase 2 (ingestion — extraction + NLP):** real document extraction (native/scanned/mixed PDF,
+  DOCX, image, multi-page TIFF) and real NLP (spaCy NER + hybrid skill/title matching +
+  deterministic experience) both deployed. Verified with a live end-to-end run: 6/6 real resumes
+  parsed correctly with genuine extracted names/skills/experience, 4/4 deliberate failure cases
+  hit the exact right terminal error, zero DLQ traffic. `nlpProcessing` runs as a container image,
+  not zip+layers, after the real built layer measured 310 MB (over Lambda's 250 MB limit) — see
+  `infra/README.md` "Phase 2 deployment result" for the full checklist and the three real
+  problems (two infra, one code) found and fixed along the way.
+
+Next: phase 3 (`docs/03-scoring-and-api.md`) — scoring engine, the recruiter REST API,
+`dlqHandler`, and alarms.

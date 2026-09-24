@@ -12,6 +12,7 @@ pypdf==4.3.*
 python-docx==1.1.*
 Pillow==10.4.*
 python-dateutil==2.9.*
+pytesseract==0.3.*
 spacy==3.8.*
 # After installing requirements-dev.txt, fetch the model separately (large download):
 #   python -m spacy download en_core_web_sm

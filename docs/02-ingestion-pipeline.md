@@ -225,9 +225,11 @@ build-NlpLayer:
 	pip install -r requirements.txt -t "$(ARTIFACTS_DIR)/python" \
 	    --platform manylinux2014_x86_64 --only-binary=:all: --python-version 3.12 --no-cache-dir
 ```
-`backend/layers/nlp_layer/requirements.txt`: pin spaCy and the model to **matching minor versions** (for example `spacy==3.8.*` with `en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl`), plus `python-dateutil` (missing from the original plan). Verify the unzipped size (< 250 MB with the function; T-006). If it's over, switch NLP to an image and record a decision.
+`backend/layers/nlp_layer/requirements.txt`: pin spaCy and the model to **matching minor versions** (for example `spacy==3.8.*` with `en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl`). Verify the unzipped size (< 250 MB with the function; T-006). If it's over, switch NLP to an image and record a decision.
 
-Result at runtime: `/opt/python/rs_common/…`, `/opt/data/*.json`, `/opt/python/spacy/…`.
+Result at runtime (if this fits): `/opt/python/rs_common/…`, `/opt/data/*.json`, `/opt/python/spacy/…`.
+
+> **Outcome (D-56): it did not fit.** Built for real with `--platform manylinux2014_x86_64 --only-binary=:all:` (the constraint the makefile build above actually uses, not an approximated local `pip install`), the layer measured **310 MB** unzipped — spaCy alone is 121 MB, numpy 69 MB (with its bundled `.libs`), blis 33 MB, thinc 15 MB, the model 15 MB. That's over Lambda's 250 MB function+layers combined limit before `CommonLayer` or the function code are even added, and the deploy failed with `Unzipped size must be smaller than 262144000 bytes`. Per this section's own contingency, `nlpProcessing` is a **container image** instead — `backend/ingestion/nlp/Dockerfile`, `public.ecr.aws/lambda/python:3.12` base (no native-binary dependency, so no Tesseract-style OS-package friction), Docker context `./backend` so it can `COPY layers/common_layer/python/rs_common` and `data/` directly (container images can't use layers). `python-dateutil` was dropped from its dependencies entirely: `rs_common.experience` (§8.3) is pure regex/stdlib `datetime`, so nothing actually imports it. `backend/layers/nlp_layer/` no longer exists. See `infra/README.md` "T-006" and `Memory.md` D-56 for the full story, including why the original spike's 137 MB measurement was wrong (it skipped the `--platform`/`--only-binary` flags).
 
 ## 6. Document Extraction (`backend/ingestion/extraction/`, T-030–T-038)
 
@@ -636,18 +638,32 @@ Algorithm (D-27; replaces the consecutive-DATE pairing, which broke on "2019 –
 Required unit cases (≥15): "Jan 2020 – Present"; "2019 – 2021" (year precision → estimated); two overlapping jobs (merged); education range excluded; "03/2018 - 06/2020"; "Sept 2017 to Aug 2019"; a future start dropped; a reversed range dropped; no dates → unknown; a DATE-uncorroborated range outside sections ignored; "'19 – '21"; multiple sections; "till date"; a 60-year span dropped; a resume with only a summary.
 
 ### 8.4 Function wiring
+
+**As actually built (D-56 — container image, not zip+layers; see §5.3's outcome callout):**
 ```yaml
 NlpFunction:
   Properties:
-    CodeUri: backend/ingestion/nlp/
-    Handler: handler.lambda_handler
-    Timeout: 30
-    MemorySize: 1024
-    Layers: [!Ref CommonLayer, !Ref NlpLayer]
+    PackageType: Image
+    Timeout: 60
+    MemorySize: 1536
     Environment:
       Variables: {JOBS_TABLE: !Ref JobsTable, CANDIDATES_TABLE: !Ref CandidatesTable, CONFIG_TABLE: !Ref ConfigTable, SCORING_QUEUE_URL: !Ref ScoringQueue}
     # No Events — invoked only by ExtractionFunction.
+  Metadata:
+    Dockerfile: ingestion/nlp/Dockerfile
+    DockerContext: ./backend
+    DockerTag: python3.12-v1
 ```
+`backend/ingestion/nlp/Dockerfile` (`FROM public.ecr.aws/lambda/python:3.12`, no OS packages needed — unlike
+extraction, NLP has no native-binary dependency) `pip install`s `requirements.txt` (`spacy`, the model wheel)
+into `${LAMBDA_TASK_ROOT}`, then `COPY`s `layers/common_layer/python/rs_common` and `data/` (the real dictionary
+source — **not** `layers/common_layer/data/`, which is only a build-artifact destination for the zip
+`CommonLayer`, never a real source directory) directly into the image, since container functions can't attach
+layers. One operational gotcha hit during the actual build: CloudFormation refuses to replace a *fixed-name*
+resource in place when `PackageType` changes (Zip → Image is an immutable-property change) — the one-time fix
+was renaming `FunctionName` to a temporary value, deploying, then renaming back to `rs-nlp-${EnvName}` and
+deploying again (`infra/README.md` has the exact steps if this ever needs repeating, e.g. after a rollback to
+zip and back).
 
 ## 9. Execution-role IAM (this phase)
 

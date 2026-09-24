@@ -72,7 +72,7 @@ Run 2026-09-23 against AWS account `331262815638`, region `ap-south-1`.
 | T-003 | Tesseract on the Lambda Python 3.12 base image (AL2023, `dnf`/`microdnf`) | See "D-34 outcome" below |
 | T-004 | SES sender verification | **Verified** — `parth.choutapelly@gmail.com`, `VerificationStatus: Success` |
 | T-005 | Lambda concurrent-execution quota | **10** (account default, ap-south-1) — matches the `MaximumConcurrency: 3/2` design (D-25) with headroom for the API and other projects' functions sharing the same quota |
-| T-006 | NLP layer size (spaCy 3.8 + `en_core_web_sm` 3.8.0 + `python-dateutil`) | **137 MB** unzipped (`pip install --target`, matching the real layer build method) — comfortably under the 250 MB zip-Layer limit. Biggest contributors: numpy 34 MB, spacy 28 MB, the model 15 MB. No need to package NLP as a container image (D-03 holds) |
+| T-006 | NLP layer size (spaCy 3.8 + `en_core_web_sm` 3.8.0) | **INVALIDATED, then corrected during phase 2 deploy.** Original spike measured 137 MB via a plain `pip install --target` on macOS arm64, with no `--platform`/`--only-binary` constraints — that silently resolved different (smaller, non-Linux) wheels than the real build. The actual `sam build --use-container` output (matching `--platform manylinux2014_x86_64 --only-binary=:all:`, what SAM's makefile build method actually runs) measured **310 MB** — over the 250 MB function+layers combined limit, and the deploy failed with exactly that error. **Result: NlpFunction switched to a container image (D-56)**, the pre-agreed D-03 fallback. Lesson for future spikes: reproduce the exact build command, don't approximate it locally. |
 
 ### D-34 outcome: extraction base image
 
@@ -92,6 +92,12 @@ built image against a real fixture image (`tests/fixtures/resumes/jordan_rivera.
 and got back genuine OCR'd text — all 139 characters recovered correctly,
 including the name, email, and skill list — proving this is real Tesseract
 output, not a stub.
+
+**Addendum (phase 2 build):** `python:3.12-slim-bookworm` does not bundle
+`boto3`/`botocore` the way the official AWS Lambda base images do — `boto3`
+had to be added explicitly to `backend/ingestion/extraction/requirements.txt`.
+Easy to miss, since every other function (zip-packaged, on the AWS Lambda
+Python runtime) gets boto3 for free.
 
 **Decision (D-34): `backend/ingestion/extraction/Dockerfile` uses Candidate B.**
 This also means the extraction function does **not** use the official
@@ -219,6 +225,72 @@ specific boxes are N/A until CloudFront is restored):
 - [x] This file documents prerequisites, spike results, the deploy-user decision, and the user-creation script
 
 **Not yet done (deliberately, not blocking):** CloudFront/`WebBucket` (deferred, see above) — no placeholder `index.html`, no HSTS/CSP check possible until restored.
+
+## Phase 2 deployment result — 2026-09-24
+
+`resume-screener-dev` reached `UPDATE_COMPLETE` after two real, non-trivial problems surfaced during the
+actual build/deploy (not caught by review or unit/component tests, since both are infrastructure-level facts
+no amount of mocked testing reveals):
+
+1. **NlpLayer measured 310 MB unzipped for real** (built with `--platform manylinux2014_x86_64
+   --only-binary=:all:`, exactly what the makefile build method runs), over Lambda's 250 MB function+layers
+   limit. The earlier T-006 spike (137 MB) had silently used different, smaller wheels by skipping those
+   platform flags. Fixed by switching `nlpProcessing` to a container image (D-56) — the pre-agreed D-03
+   fallback. See "D-34 outcome" section above (its addendum) and `docs/Memory.md` D-56.
+2. **CloudFormation refused to replace `NlpFunction` in place** when `PackageType` changed Zip → Image,
+   because it has a fixed `FunctionName`: *"CloudFormation cannot update a stack when a custom-named resource
+   requires replacing. Rename rs-nlp-dev and update the stack again."* Fixed with the two-deploy dance AWS's
+   own error message describes: temporarily set `FunctionName: !Sub rs-nlp-tmp-${EnvName}`, deploy (creates
+   the new Image-typed function under the temp name, deletes the old Zip one), then revert to
+   `!Sub rs-nlp-${EnvName}` and deploy again (renames/replaces to the final name). Needed only for this one
+   Zip→Image transition — an ordinary code change to the image doesn't hit this.
+3. A **real code bug**, also only visible once actually deployed: `backend/ingestion/nlp/Dockerfile` copied
+   `data/` from `layers/common_layer/data/`, which is an *empty placeholder directory* (that path is only
+   ever populated as a build ARTIFACT by `CommonLayer`'s makefile build, for zip-packaged functions using the
+   layer — it was never a real source tree). The image built successfully (Docker doesn't complain about
+   copying an empty directory) but failed at runtime with `FileNotFoundError` on the first dictionary lookup.
+   Fixed by copying from the real source, `data/` (i.e. `backend/data/`), directly. The empty placeholder
+   directory was deleted.
+
+Verified against `docs/02-ingestion-pipeline.md` §11 Definition of Done, with a real deployed end-to-end run
+(`tests/integration/phase2_run.py dev`), not just mocks:
+
+- [x] `rs_common` unit tests green; coverage 93% overall (ddb/errors 100%, normalization 98%, experience 90%,
+      fanout 88%) — exceeds the "normalization, experience, ddb, errors ≥ 90%" requirement
+- [x] `scripts/validate_data.py` passes: 318 skills, 170 titles, 22 title families (all exceed the minimums)
+- [x] Layers build with `sam build --use-container`; `CommonLayer` deploys fine; `NlpLayer` **does not exist**
+      (D-56) — `nlpProcessing`'s image measured 280 MB total, comfortably under the 10 GB **image** limit
+      (a different, much larger ceiling than the 250 MB zip+layers limit that failed)
+- [x] JD upload → `job_itest...` has `derived_skills=[aws, dynamodb, python]`, `parse_status=parsed`;
+      explicit `required_*` untouched (none were set on this test job, correctly left absent)
+- [x] Native PDF (×2), scanned PDF, mixed PDF, DOCX, and image resumes → all 6 populated from **their own
+      text**: real names (Jane Doe, Alice Johnson, Daniel Kim, Maya Bennett, Bob Kumar, Jordan Rivera), real
+      skills, correct `file_type` per case (`pdf_native`, `pdf_scanned`, `pdf_mixed`, `docx`, `image`)
+- [x] `total_experience_years` confirmed as a real DynamoDB **Number** (`{"N": "5.7"}` in the console/CLI) on
+      a real parsed candidate; confirmed **absent** (no attribute at all) on a terminal-error candidate
+- [x] Each terminal case (corrupt, renamed-text, blank-scan, 11-page) produced exactly **one** `failed_jobs`
+      row (`terminal=true`) with the correct `error_code`; `IngestionQueue`/`IngestionDLQ` both measured 0
+      messages after the run — no redelivery for any of them
+- [x] Resumes uploaded before their JD were correctly enqueued for scoring by the JD fan-out (all 6 reached
+      `parsed` even though the JD finished parsing after some of them, by design — D-18)
+- [x] `grep -rn "failed_jobs\|FAILED_JOBS" backend/ingestion/nlp/` → no matches (D-20 holds)
+- [x] Log review: real CloudWatch logs for this run contain no candidate names or emails (`filter-log-events`
+      for "Jane"/an email fragment → zero matches); structured JSON confirmed (`level`, `msg`, `timestamp`,
+      `stage`, `job_id`, `candidate_id`, `doc_type`, `file_type`, `ocr_pages`)
+- [x] Code review against §1: no filename branching, canned text, fabricated confidences; `grep -ri
+      "textract\|comprehend"` matches only false positives (the substring inside "documentExtraction")
+
+**Two genuine NLP-quality bugs found and fixed during component testing** (before deploying, via the real
+`en_core_web_sm` model — not assumed, actually observed): `en_core_web_sm` sometimes merges a candidate's name
+with an immediately adjacent unseparated line (e.g. an email right below it, no blank line) into one PERSON
+span — `pick_name` now takes only the entity's first line and rejects spans containing `@`/digits. And the
+original employer-exclusion check only matched an ORG's exact text against the skills dictionary, so "Docker
+Inc" wasn't recognized as normalizing to the skill "docker" — it now also checks the text with common
+corporate suffixes (Inc/LLC/Corp/...) stripped. Both are D-55 in `docs/Memory.md`. A pre-existing accuracy
+limitation was also confirmed empirically (not assumed): `en_core_web_sm`'s ORG recognition is markedly
+weaker on compact single-line "Company - Title - Date" resume bullets than on full prose sentences, and it
+tags "Docker" as PERSON rather than ORG regardless of context — recorded in `docs/Memory.md` §9 as a target
+for the flagship custom-NER enhancement (F1), not something the dictionary layer can paper over.
 
 ## Runbook
 

@@ -1,2 +1,12 @@
-# Empty in phase 1 — this is a stub image. Real dependencies (pypdf, PyMuPDF,
-# python-docx, pytesseract, Pillow) are pinned in phase 2 (docs/02-ingestion-pipeline.md §6.1).
+# Real extraction dependencies (docs/02-ingestion-pipeline.md §6.1).
+# PyMuPDF is AGPL — acceptable for this academic deliverable; noted in
+# docs/deliverables.md (phase 5, T-111).
+#
+# boto3 must be pinned explicitly (D-34 addendum): the official AWS Lambda
+# base images bundle it, but python:3.12-slim-bookworm does not.
+boto3==1.35.*
+pypdf==4.3.*
+PyMuPDF==1.24.*
+python-docx==1.1.*
+pytesseract==0.3.*
+Pillow==10.4.*
