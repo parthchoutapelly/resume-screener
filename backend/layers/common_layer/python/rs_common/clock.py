@@ -22,3 +22,18 @@ def epoch_in_days(n: int) -> int:
     """Unix epoch seconds n days from now — used for DynamoDB TTL attributes
     (failed_jobs.expires_at, R-DATA-08's 90-day audit retention)."""
     return int((datetime.now(UTC) + timedelta(days=n)).timestamp())
+
+
+def now() -> datetime:
+    """Current aware UTC datetime (for comparisons; store via now_iso())."""
+    return datetime.now(UTC)
+
+
+def iso_in_seconds(n: int) -> str:
+    """ISO-8601 'Z' timestamp n seconds from now (presigned-upload expiry)."""
+    return (datetime.now(UTC) + timedelta(seconds=n)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_iso(s: str) -> datetime:
+    """Parses the 'Z'-suffixed timestamps this project writes into an aware datetime."""
+    return datetime.fromisoformat(s.replace("Z", "+00:00"))

@@ -1,5 +1,5 @@
 # Dev/test tooling only — NOT deployed. Lambda dependencies are pinned separately
-# in backend/ingestion/extraction/requirements.txt and backend/layers/nlp_layer/requirements.txt.
+# in backend/ingestion/extraction/requirements.txt and backend/ingestion/nlp/requirements.txt.
 pytest==8.3.*
 pytest-cov==5.0.*
 moto[dynamodb,s3,sqs,sns]==5.0.*
@@ -20,3 +20,6 @@ spacy==3.8.*
 # Fixture generation only (tests/fixtures/generate_fixtures.py) — not a runtime dependency
 fpdf2==2.8.*
 pymupdf==1.24.*
+
+# Phase 3 deployed integration test: SRP sign-in for the synthetic Cognito test users
+pycognito==2024.5.1

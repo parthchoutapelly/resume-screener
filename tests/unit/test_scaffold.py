@@ -1,20 +1,15 @@
-"""Smoke test: every handler that is *still a stub* returns the documented
-501 envelope. extraction and nlp got real implementations in phase 2
-(docs/02-ingestion-pipeline.md) — they're covered by their own component
-tests instead (tests/component/), not this list.
+"""Every Lambda entry point in the layout from docs/01 §3 exists and exposes
+`lambda_handler` (the 501 stubs were all replaced by real code in phases 2-3)."""
 
-Scoring, the API routes, and dlqHandler remain 501 stubs until phase 3
-(docs/03-scoring-and-api.md).
-"""
-
-import importlib.util
-import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-STUB_HANDLERS = [
+HANDLERS = [
+    "backend/ingestion/extraction/app/handler.py",
+    "backend/ingestion/nlp/handler.py",
     "backend/scoring/score_match/handler.py",
+    "backend/reliability/dlq_handler/handler.py",
     "backend/api/create_job_posting/handler.py",
     "backend/api/add_resumes/handler.py",
     "backend/api/get_jobs/handler.py",
@@ -25,36 +20,17 @@ STUB_HANDLERS = [
     "backend/api/get_resume_url/handler.py",
     "backend/api/export_shortlist_csv/handler.py",
     "backend/api/get_failed_jobs/handler.py",
-    "backend/reliability/dlq_handler/handler.py",
 ]
 
 
-def _load_handler(rel_path: str):
-    path = REPO_ROOT / rel_path
-    spec = importlib.util.spec_from_file_location(rel_path.replace("/", "_"), path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def test_every_handler_location_exists_and_defines_lambda_handler():
+    assert len(HANDLERS) == 14
+    for rel in HANDLERS:
+        path = REPO_ROOT / rel
+        assert path.is_file(), f"missing {rel}"
+        assert "def lambda_handler" in path.read_text(), rel
 
 
-def test_all_twelve_remaining_stub_locations_exist():
-    assert len(STUB_HANDLERS) == 12
-    for rel_path in STUB_HANDLERS:
-        assert (REPO_ROOT / rel_path).is_file(), f"missing {rel_path}"
-
-
-def test_every_remaining_stub_returns_the_501_envelope():
-    for rel_path in STUB_HANDLERS:
-        module = _load_handler(rel_path)
-        result = module.lambda_handler({}, None)
-        assert result["statusCode"] == 501, rel_path
-        body = json.loads(result["body"])
-        assert body["error"]["code"] == "NOT_IMPLEMENTED", rel_path
-
-
-def test_extraction_and_nlp_are_no_longer_stubs():
-    """Phase 2 replaced these two — this guards against accidentally leaving
-    (or reverting to) the 501 stub for either."""
-    for rel_path in ["backend/ingestion/extraction/app/handler.py", "backend/ingestion/nlp/handler.py"]:
-        source = (REPO_ROOT / rel_path).read_text()
-        assert "NOT_IMPLEMENTED" not in source, f"{rel_path} still looks like a stub"
+def test_no_stub_501_handlers_remain():
+    for rel in HANDLERS:
+        assert "NOT_IMPLEMENTED" not in (REPO_ROOT / rel).read_text(), rel

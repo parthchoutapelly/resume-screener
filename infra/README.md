@@ -292,12 +292,91 @@ weaker on compact single-line "Company - Title - Date" resume bullets than on fu
 tags "Docker" as PERSON rather than ORG regardless of context — recorded in `docs/Memory.md` §9 as a target
 for the flagship custom-NER enhancement (F1), not something the dictionary layer can paper over.
 
+## Phase 3 deployment result — 2026-09-24
+
+Deployed to `resume-screener-dev` (`UPDATE_COMPLETE`, first attempt — no CloudFormation
+rollbacks this phase). Added: `RecruiterApi` (REST, Cognito authorizer, throttled 20/40),
+`ScoreMatchFunction` (SQS, `MaximumConcurrency: 2`), the 10 API functions, `DlqHandlerFunction`
+(both DLQs), 12 CloudWatch alarms → `AlertsTopic`, and the `ApiBaseUrl` output. Every function
+has its own role with an inline policy scoped exactly as `docs/Architecture.md` §8.1
+(verified on the live roles); the only `*` in a resource is the documented SES `identity/*`
+(sandbox authorizes the *recipient* identity too) guarded by a `ses:FromAddress` condition.
+
+**API base URL:** `aws cloudformation describe-stacks --stack-name resume-screener-dev --query "Stacks[0].Outputs[?OutputKey=='ApiBaseUrl'].OutputValue" --output text`
+
+**CORS origin (D-57):** the stack parameter `AllowedOrigin` (default `http://localhost:5173`)
+is the single allowed browser origin. When CloudFront is restored, deploy with
+`AllowedOrigin=https://<distribution-domain>` (add it to `parameter_overrides` in
+`samconfig.toml`) — never `*`.
+
+### Verification (`tests/integration/phase3_run.py`, against the live stack)
+
+Run: `.venv/bin/python tests/integration/phase3_run.py dev` (≈25 min; the forced-failure
+scenario has to wait out 5 real SQS retries). Signs in through the real Cognito authorizer
+with the four synthetic users using **per-run random passwords** (set via the admin API, so
+the `TempPass1234` in "Manual one-time steps" no longer applies to those four users).
+
+**80/80 checks passed** on the final run. (The first run was 79/80: the one failure was a wrong
+assertion in the test — a candidate scoring 100 is *correctly* `recommended` at a threshold of 95 —
+so the assertion was changed to `recommended ⇔ match_score ≥ threshold` and the whole suite re-run;
+no product code changed.) Covered, mapped to the `docs/03` Definition of Done:
+
+| DoD item | Evidence (live) |
+|---|---|
+| Worked example = 71.3 on a deployed candidate | Real `scoreMatch` Lambda → 71.3 (66.7 / 60 / 100), `related` title, `dynamodb` missing, stored as a DynamoDB Number |
+| Resumes **before** the JD are scored after it parses; no `scoring` failure rows | 4 real resumes wait as `awaiting_jd` (2 bad files already `error` with exact codes), JD uploaded last → all 4 scored automatically; 0 `scoring` rows |
+| `jd.source=none` + explicit skills scores immediately; a JD with no skills blocks until PATCHed | Scored with no PATCH; vague text JD → `blocking_reason=no_required_skills`, candidate `awaiting_requirements`, PATCH → `rescore_enqueued=1` → scored |
+| PATCH → rescore, decisions untouched | Threshold PATCH re-queues the 4 parsed candidates; every `decision`/`notification_status` identical afterwards; `recommended ⇔ score ≥ 95` |
+| `GET …/candidates` returns every candidate with correct status + sort | `processing`, `awaiting_jd`, `error`, `scored` all observed; scored desc, errors last; no internal fields exposed |
+| Shortlist→reject→shortlist = exactly one email; missing email → `skipped_no_email`; unscored → 409 | Mailbox simulator: `sent`, `notification_sent_at` unchanged after reject + re-shortlist; no email → `skipped_no_email`; unscored → 409 `NOT_SCORED`; SES-rejected recipient → `failed` with the decision kept and one PII-free `stage=api` audit row |
+| Export only shortlisted; `=` name → `'=` | 2 rows, UTF-8 BOM, exact R-BUS-12 columns, `'=cmd…` |
+| 401 with CORS; groupless 403 on every route; B → 404 on all of A's routes; Recruiter → 403 on `/failed-jobs` | 401 (no/garbage token) and 403 both carry `Access-Control-Allow-Origin`; preflight 200 without a token; foreign origin not allowed; 403 on all 10 routes; 7/7 of B's probes 404 with a body identical to a non-existent job and DynamoDB unchanged; Admin sees all jobs + `recruiter_id` |
+| Forced scoring failure → 5 `scoring` rows → 1 `scoring_exhausted` → `score_status=error`, `parse_status` still `parsed` → alarm | Exactly that; API shows `error`/`scoring_failed`; EMF metric `ResumeScreener/TerminalFailures{Queue=scoring}` exists (JSON log format passes EMF through, so no `PutMetricData` fallback needed); alarm `rs-TerminalFailuresScoring-dev` reached `ALARM` |
+| Oversized / tampered uploads rejected by S3 | 11 MB → `EntityTooLarge`; changed `Content-Type` → 403; changed `key` → 403; unsupported extension → API 400 |
+| Roles match §8.1; no `Resource: "*"` | Live roles inspected (one inline policy each); only the documented SES `identity/*` |
+| No candidate PII in logs; no Textract/Comprehend | 0 hits for names/emails across all 14 function log groups; static grep clean |
+| `infra/README.md` runbook | deploy, seed, users, SES, replay, alarms, teardown (below) |
+
+Two things are seeded straight into DynamoDB and then handled by the **real deployed**
+`scoreMatch` Lambda, because real NLP cannot be steered to them on demand: the documented
+worked example (skills `[python, aws, sql]`, title `backend developer`, 4.0 y → **71.3**), and
+a candidate whose `total_experience_years` is a non-number, which makes scoring raise a
+genuine exception (→ 5 attempts → DLQ → `score_status=error`). Emails only ever go to the SES
+mailbox simulator (`success@simulator.amazonses.com`); fixture addresses are unverified in the
+sandbox, which is what exercises the `failed` path. See D-60.
+
+### Notes / gotchas found this phase
+
+- **Colima does not survive a reboot.** `sam build` then fails with "requires a container
+  runtime". Run `colima start --cpu 2 --memory 4 --arch x86_64` and re-export `DOCKER_HOST`.
+- **REST authorizer input:** the raw ID token goes in `Authorization` (no `Bearer `). The
+  `cognito:groups` claim arrives flattened as a string; `rs_common.authz` parses both that and
+  list forms, and the deployed groupless check proves the real format is handled.
+- **Read-only API routes don't write `failed_jobs` rows on an unexpected 500** (D-58); check
+  the function's CloudWatch log and the `rs-Api5xx-dev` alarm instead.
+- Alarms have no e-mail subscriber unless the stack is deployed with `AlertEmail=<address>`
+  (then confirm the SNS subscription e-mail). The alarm *state* was verified via
+  `describe-alarms`; e-mail delivery itself needs that parameter.
+
 ## Runbook
 
 - **Re-deploy after a template change**: `make build && make deploy ENV=dev`.
 - **Check stack outputs**: `aws cloudformation describe-stacks --stack-name resume-screener-dev --query 'Stacks[0].Outputs'`.
 - **Tail a function's logs**: `sam logs -n <LogicalId> --stack-name resume-screener-dev --tail`.
 - **Manual replay of a terminal ingestion failure** (phase 2+): see `docs/Architecture.md` §11.6.
+  Short form: fix the cause, then either re-add the resume with `POST /jobs/{id}/resumes`
+  (preferred) or `aws sqs send-message` the failed row's `raw_payload` (the original S3
+  event) to `IngestionQueueUrl`. A scoring failure (`score_status=error`) is recovered by
+  `PATCH /jobs/{id}` (any field), which re-queues every parsed candidate.
+- **Create/reset a user**: `scripts/create-user.sh dev <email> <Recruiter|Admin|none>`; a
+  permanent password can be set with `aws cognito-idp admin-set-user-password --permanent`.
+- **SES**: the account is in the sandbox — only verified recipients receive mail. Verify a
+  recipient with `aws ses verify-email-identity --email-address <addr> --region ap-south-1`
+  before a demo, or use `success@simulator.amazonses.com` for tests. Check the sender:
+  `aws ses get-identity-verification-attributes --identities <SesSenderAddress>`.
+- **Get a token for manual curl** (SRP only, no password flow is enabled): use
+  `tests/integration/phase3_run.py`'s `setup()` helper (pycognito) or the Amplify UI in phase 4.
+- **Alarm e-mails**: redeploy with `AlertEmail=you@example.com` and confirm the SNS subscription.
 - **Teardown**: empty both buckets, then `sam delete --stack-name resume-screener-dev`. DynamoDB
   tables and log groups are deleted with the stack (no `DeletionPolicy: Retain` is set anywhere).
 - **Docker not responding after a reboot**: `colima start` (it does not auto-start on login by

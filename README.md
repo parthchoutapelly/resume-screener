@@ -30,7 +30,7 @@ manual one-time setup steps, and the operational runbook.
 
 ## Status
 
-**Phases 1–2 — deployed to `dev` and verified end-to-end on real AWS infrastructure.**
+**Phases 1–3 — deployed to `dev` and verified end-to-end on real AWS infrastructure.**
 
 - **Phase 1 (infrastructure):** `resume-screener-dev` stack live — 4 DynamoDB tables, 4 SQS
   queues, Cognito pool + test users, SNS, all core Lambda functions. CloudFront/frontend hosting
@@ -45,5 +45,11 @@ manual one-time setup steps, and the operational runbook.
   `infra/README.md` "Phase 2 deployment result" for the full checklist and the three real
   problems (two infra, one code) found and fixed along the way.
 
-Next: phase 3 (`docs/03-scoring-and-api.md`) — scoring engine, the recruiter REST API,
-`dlqHandler`, and alarms.
+- **Phase 3 (scoring, API, reliability):** the explainable scoring engine (`v1`), the 10-route
+  recruiter REST API behind Cognito + CORS, `dlqHandler`, and 12 CloudWatch alarms. 332 unit +
+  component tests (96% `rs_common` coverage) and an 80-check live run against the deployed stack
+  — see `infra/README.md` "Phase 3 deployment result". CORS is currently limited to
+  `http://localhost:5173` via the `AllowedOrigin` parameter until CloudFront is restored (D-57).
+
+Next: phase 4 (`docs/04-frontend-dashboard.md`) — needs CloudFront restored first (AWS account
+verification, see `infra/README.md` "CloudFront deferred").

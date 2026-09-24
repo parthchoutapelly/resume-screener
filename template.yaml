@@ -2,9 +2,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
   AI-Powered Resume Screener & Talent Acquisition Pipeline.
-  Phase 1: infrastructure scaffold only — storage, database, queues, auth,
-  hosting, alerting, and 14 stub Lambda functions (all return 501). No
-  business logic. See docs/01-infrastructure-setup.md.
+  Phases 1-3: storage, database, queues, auth, alerting, ingestion (extraction +
+  NLP), scoring, the recruiter REST API, dlqHandler and alarms.
+  See docs/01-infrastructure-setup.md through docs/03-scoring-and-api.md.
 
 Parameters:
   EnvName:
@@ -29,6 +29,13 @@ Parameters:
   BudgetAmountUsd:
     Type: Number
     Default: 10
+  AllowedOrigin:
+    Type: String
+    Default: "http://localhost:5173"
+    Description: >
+      The single browser origin allowed by API CORS (R-SEC-07). Defaults to the local
+      Vite dev server. Once CloudFront is restored (template-web-hosting.yaml.deferred)
+      this becomes https://${WebDistribution.DomainName}. Never a wildcard.
 
 Conditions:
   # IsDev removed for now — only used by the CORS !If restored alongside
@@ -334,7 +341,7 @@ Resources:
           Subscribers: [{SubscriptionType: SNS, Address: !Ref AlertsTopic}]
 
   # ---------------------------------------------------------------------
-  # Lambda — 14 stub functions (all 501; no Events/Policies/Layers yet)
+  # Lambda — extraction + NLP (phase 2, container images); scoring/API/reliability follow
   # ---------------------------------------------------------------------
   ExtractionFunction:
     Type: AWS::Serverless::Function
@@ -438,6 +445,9 @@ Resources:
     # routes) — NlpFunction no longer needs it now that it's an image
     # (container functions can't use layers; rs_common is COPYed directly).
 
+  # ---------------------------------------------------------------------
+  # Scoring (phase 3) — SQS-triggered; "not ready" is acked, never retried (D-18)
+  # ---------------------------------------------------------------------
   ScoreMatchFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -447,10 +457,69 @@ Resources:
       Runtime: python3.12
       Timeout: 10
       MemorySize: 256
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          JOBS_TABLE: !Ref JobsTable
+          CANDIDATES_TABLE: !Ref CandidatesTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt JobsTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt CandidatesTable.Arn
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt FailedJobsTable.Arn
+      Events:
+        Scoring:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ScoringQueue.Arn
+            BatchSize: 1
+            ScalingConfig: {MaximumConcurrency: 2}  # D-25
   ScoreMatchLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-score-match-${EnvName}", RetentionInDays: 30}
 
+  # ---------------------------------------------------------------------
+  # REST API — Cognito authorizer, single CORS origin, throttled (R-AUTH-01, R-SEC-07/10)
+  # ---------------------------------------------------------------------
+  RecruiterApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub rs-api-${EnvName}
+      StageName: !Ref EnvName
+      Cors:
+        AllowOrigin: !Sub "'${AllowedOrigin}'"
+        AllowMethods: "'GET,POST,PATCH,OPTIONS'"
+        AllowHeaders: "'Authorization,Content-Type'"
+        MaxAge: "'600'"
+      Auth:
+        DefaultAuthorizer: CognitoAuth
+        AddDefaultAuthorizerToCorsPreflight: false  # preflight must not need a token
+        Authorizers:
+          CognitoAuth:
+            UserPoolArn: !GetAtt UserPool.Arn
+            Identity: {Header: Authorization}  # raw ID token, no "Bearer " prefix (D-47)
+      GatewayResponses:  # 401/403/429/5xx produced by the gateway itself still carry CORS
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: !Sub "'${AllowedOrigin}'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: !Sub "'${AllowedOrigin}'"
+      MethodSettings:
+        - {ResourcePath: "/*", HttpMethod: "*", ThrottlingRateLimit: 20, ThrottlingBurstLimit: 40}
+
+  # ---------------------------------------------------------------------
+  # API functions — IAM exactly per docs/Architecture.md §8.1
+  # ---------------------------------------------------------------------
   CreateJobPostingFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -458,6 +527,37 @@ Resources:
       CodeUri: backend/api/create_job_posting/
       Handler: handler.lambda_handler
       Runtime: python3.12
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          JOBS_TABLE: !Ref JobsTable
+          CANDIDATES_TABLE: !Ref CandidatesTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+          UPLOAD_BUCKET: !Ref UploadBucket
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt JobsTable.Arn
+            - Effect: Allow
+              Action: dynamodb:BatchWriteItem
+              Resource: !GetAtt CandidatesTable.Arn
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt FailedJobsTable.Arn
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource:
+                - !Sub "${UploadBucket.Arn}/jd-uploads/*"
+                - !Sub "${UploadBucket.Arn}/resume-uploads/*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RecruiterApi
+            Path: /jobs
+            Method: POST
   CreateJobPostingLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-create-job-posting-${EnvName}", RetentionInDays: 30}
@@ -469,6 +569,35 @@ Resources:
       CodeUri: backend/api/add_resumes/
       Handler: handler.lambda_handler
       Runtime: python3.12
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          JOBS_TABLE: !Ref JobsTable
+          CANDIDATES_TABLE: !Ref CandidatesTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+          UPLOAD_BUCKET: !Ref UploadBucket
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt JobsTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:BatchWriteItem, dynamodb:Query]
+              Resource: !GetAtt CandidatesTable.Arn
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt FailedJobsTable.Arn
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub "${UploadBucket.Arn}/resume-uploads/*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RecruiterApi
+            Path: /jobs/{job_id}/resumes
+            Method: POST
   AddResumesLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-add-resumes-${EnvName}", RetentionInDays: 30}
@@ -480,6 +609,26 @@ Resources:
       CodeUri: backend/api/get_jobs/
       Handler: handler.lambda_handler
       Runtime: python3.12
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          JOBS_TABLE: !Ref JobsTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query, dynamodb:Scan]
+              Resource:
+                - !GetAtt JobsTable.Arn
+                - !Sub "${JobsTable.Arn}/index/RecruiterJobsIndex"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RecruiterApi
+            Path: /jobs
+            Method: GET
   GetJobsLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-get-jobs-${EnvName}", RetentionInDays: 30}
@@ -491,6 +640,24 @@ Resources:
       CodeUri: backend/api/get_job/
       Handler: handler.lambda_handler
       Runtime: python3.12
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          JOBS_TABLE: !Ref JobsTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt JobsTable.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RecruiterApi
+            Path: /jobs/{job_id}
+            Method: GET
   GetJobLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-get-job-${EnvName}", RetentionInDays: 30}
@@ -502,6 +669,32 @@ Resources:
       CodeUri: backend/api/update_job/
       Handler: handler.lambda_handler
       Runtime: python3.12
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          JOBS_TABLE: !Ref JobsTable
+          CANDIDATES_TABLE: !Ref CandidatesTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+          SCORING_QUEUE_URL: !Ref ScoringQueue
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt JobsTable.Arn
+            - Effect: Allow
+              Action: dynamodb:Query
+              Resource: !GetAtt CandidatesTable.Arn
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt ScoringQueue.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RecruiterApi
+            Path: /jobs/{job_id}
+            Method: PATCH
   UpdateJobLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-update-job-${EnvName}", RetentionInDays: 30}
@@ -513,6 +706,28 @@ Resources:
       CodeUri: backend/api/get_candidates_by_job/
       Handler: handler.lambda_handler
       Runtime: python3.12
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          JOBS_TABLE: !Ref JobsTable
+          CANDIDATES_TABLE: !Ref CandidatesTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt JobsTable.Arn
+            - Effect: Allow
+              Action: dynamodb:Query
+              Resource: !GetAtt CandidatesTable.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RecruiterApi
+            Path: /jobs/{job_id}/candidates
+            Method: GET
   GetCandidatesByJobLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-get-candidates-by-job-${EnvName}", RetentionInDays: 30}
@@ -524,6 +739,40 @@ Resources:
       CodeUri: backend/api/update_candidate_decision/
       Handler: handler.lambda_handler
       Runtime: python3.12
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          JOBS_TABLE: !Ref JobsTable
+          CANDIDATES_TABLE: !Ref CandidatesTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+          SES_SENDER_ADDRESS: !Ref SesSenderAddress
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt JobsTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt CandidatesTable.Arn
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt FailedJobsTable.Arn
+            - Effect: Allow
+              Action: ses:SendEmail
+              # In SES sandbox the recipient identity is also authorized, so the resource is
+              # account-scoped; the FromAddress condition is the tight control (docs/03 §9).
+              Resource: !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+              Condition:
+                StringEquals:
+                  "ses:FromAddress": !Ref SesSenderAddress
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RecruiterApi
+            Path: /jobs/{job_id}/candidates/{candidate_id}/decision
+            Method: POST
   UpdateCandidateDecisionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-update-candidate-decision-${EnvName}", RetentionInDays: 30}
@@ -535,6 +784,32 @@ Resources:
       CodeUri: backend/api/get_resume_url/
       Handler: handler.lambda_handler
       Runtime: python3.12
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          JOBS_TABLE: !Ref JobsTable
+          CANDIDATES_TABLE: !Ref CandidatesTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+          UPLOAD_BUCKET: !Ref UploadBucket
+          FEATURE_RESUME_VIEW: "true"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource:
+                - !GetAtt JobsTable.Arn
+                - !GetAtt CandidatesTable.Arn
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub "${UploadBucket.Arn}/resume-uploads/*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RecruiterApi
+            Path: /jobs/{job_id}/candidates/{candidate_id}/resume-url
+            Method: GET
   GetResumeUrlLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-get-resume-url-${EnvName}", RetentionInDays: 30}
@@ -546,6 +821,32 @@ Resources:
       CodeUri: backend/api/export_shortlist_csv/
       Handler: handler.lambda_handler
       Runtime: python3.12
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          JOBS_TABLE: !Ref JobsTable
+          CANDIDATES_TABLE: !Ref CandidatesTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+          UPLOAD_BUCKET: !Ref UploadBucket
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt JobsTable.Arn
+            - Effect: Allow
+              Action: dynamodb:Query
+              Resource: !GetAtt CandidatesTable.Arn
+            - Effect: Allow
+              Action: [s3:PutObject, s3:GetObject]
+              Resource: !Sub "${UploadBucket.Arn}/exports/*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RecruiterApi
+            Path: /jobs/{job_id}/export
+            Method: GET
   ExportShortlistCsvLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-export-shortlist-csv-${EnvName}", RetentionInDays: 30}
@@ -557,10 +858,31 @@ Resources:
       CodeUri: backend/api/get_failed_jobs/
       Handler: handler.lambda_handler
       Runtime: python3.12
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          JOBS_TABLE: !Ref JobsTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query, dynamodb:Scan]
+              Resource: !GetAtt FailedJobsTable.Arn
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RecruiterApi
+            Path: /failed-jobs
+            Method: GET
   GetFailedJobsLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-get-failed-jobs-${EnvName}", RetentionInDays: 30}
 
+  # ---------------------------------------------------------------------
+  # Reliability — dlqHandler drains both DLQs into visible terminal states
+  # ---------------------------------------------------------------------
   DlqHandlerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -570,9 +892,241 @@ Resources:
       Runtime: python3.12
       Timeout: 10
       MemorySize: 128
+      Layers: [!Ref CommonLayer]
+      Environment:
+        Variables:
+          JOBS_TABLE: !Ref JobsTable
+          CANDIDATES_TABLE: !Ref CandidatesTable
+          FAILED_JOBS_TABLE: !Ref FailedJobsTable
+          INGESTION_DLQ_ARN: !GetAtt IngestionDLQ.Arn
+      Policies:
+        # Metrics go out as Embedded Metric Format on stdout (D-49): no cloudwatch:PutMetricData needed.
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: [!GetAtt JobsTable.Arn, !GetAtt CandidatesTable.Arn]
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt FailedJobsTable.Arn
+      Events:
+        IngestionDlq:
+          Type: SQS
+          Properties: {Queue: !GetAtt IngestionDLQ.Arn, BatchSize: 1}
+        ScoringDlq:
+          Type: SQS
+          Properties: {Queue: !GetAtt ScoringDLQ.Arn, BatchSize: 1}
   DlqHandlerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-dlq-handler-${EnvName}", RetentionInDays: 30}
+
+  # ---------------------------------------------------------------------
+  # Alarms -> AlertsTopic (docs/03 §8). Deliberately NOT on DLQ
+  # ApproximateNumberOfMessagesVisible: dlqHandler drains them, so it always reads 0 (D-32).
+  # ---------------------------------------------------------------------
+  TerminalFailuresIngestion:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-TerminalFailuresIngestion-${EnvName}"
+      AlarmDescription: A ingestion message exhausted its retries and became a terminal failure
+      Namespace: ResumeScreener
+      MetricName: TerminalFailures
+      Dimensions:
+        - {Name: Queue, Value: ingestion}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  TerminalFailuresScoring:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-TerminalFailuresScoring-${EnvName}"
+      AlarmDescription: A scoring message exhausted its retries and became a terminal failure
+      Namespace: ResumeScreener
+      MetricName: TerminalFailures
+      Dimensions:
+        - {Name: Queue, Value: scoring}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  IngestionDlqReceived:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-IngestionDlqReceived-${EnvName}"
+      AlarmDescription: A message reached the ingestion DLQ
+      Namespace: AWS/SQS
+      MetricName: NumberOfMessagesReceived
+      Dimensions:
+        - {Name: QueueName, Value: !GetAtt IngestionDLQ.QueueName}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  ScoringDlqReceived:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-ScoringDlqReceived-${EnvName}"
+      AlarmDescription: A message reached the scoring DLQ
+      Namespace: AWS/SQS
+      MetricName: NumberOfMessagesReceived
+      Dimensions:
+        - {Name: QueueName, Value: !GetAtt ScoringDLQ.QueueName}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  ExtractionErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-ExtractionErrors-${EnvName}"
+      AlarmDescription: Extraction function raised an error
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref ExtractionFunction}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  NlpErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-NlpErrors-${EnvName}"
+      AlarmDescription: Nlp function raised an error
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref NlpFunction}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  ScoreMatchErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-ScoreMatchErrors-${EnvName}"
+      AlarmDescription: ScoreMatch function raised an error
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref ScoreMatchFunction}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  DlqHandlerErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-DlqHandlerErrors-${EnvName}"
+      AlarmDescription: DlqHandler function raised an error
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref DlqHandlerFunction}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  ExtractionThrottles:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-ExtractionThrottles-${EnvName}"
+      AlarmDescription: Extraction function was throttled
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref ExtractionFunction}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  NlpThrottles:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-NlpThrottles-${EnvName}"
+      AlarmDescription: Nlp function was throttled
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref NlpFunction}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  ScoreMatchThrottles:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-ScoreMatchThrottles-${EnvName}"
+      AlarmDescription: ScoreMatch function was throttled
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref ScoreMatchFunction}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  Api5xx:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-Api5xx-${EnvName}"
+      AlarmDescription: The recruiter API returned a 5XX
+      Namespace: AWS/ApiGateway
+      MetricName: 5XXError
+      Dimensions:
+        - {Name: ApiName, Value: !Sub "rs-api-${EnvName}"}
+        - {Name: Stage, Value: !Ref EnvName}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
 
 Outputs:
   UploadBucketName: {Value: !Ref UploadBucket}
@@ -587,3 +1141,4 @@ Outputs:
   UserPoolId: {Value: !Ref UserPool}
   UserPoolClientId: {Value: !Ref UserPoolClient}
   AlertsTopicArn: {Value: !Ref AlertsTopic}
+  ApiBaseUrl: {Value: !Sub "https://${RecruiterApi}.execute-api.${AWS::Region}.amazonaws.com/${EnvName}"}
