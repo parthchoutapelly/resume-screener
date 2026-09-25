@@ -1,0 +1,5 @@
+/* src/index.css — imports the design system */
+@import './styles/tokens.css';
+@import './styles/base.css';
+@import './styles/components.css';
+@import './App.css';

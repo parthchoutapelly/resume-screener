@@ -38,9 +38,7 @@ Parameters:
       this becomes https://${WebDistribution.DomainName}. Never a wildcard.
 
 Conditions:
-  # IsDev removed for now — only used by the CORS !If restored alongside
-  # CloudFront (template-web-hosting.yaml.deferred). Add back as:
-  #   IsDev: !Equals [!Ref EnvName, dev]
+  IsDev: !Equals [!Ref EnvName, dev]
   HasAlertEmail: !Not [!Equals [!Ref AlertEmail, ""]]
   MakeBudget: !Equals [!Ref CreateBudget, "true"]
 
@@ -79,12 +77,11 @@ Resources:
               SSEAlgorithm: AES256
       CorsConfiguration:
         CorsRules:
-          # TEMPORARY (see infra/README.md "CloudFront deferred"): the real origin is
-          # ${WebDistribution.DomainName}, but WebDistribution/WebBucket are commented
-          # out below pending AWS account verification for CloudFront. Restore the
-          # !If [IsDev, [cloudfront, localhost], [cloudfront]] form once re-added.
           - AllowedMethods: [POST, GET]
-            AllowedOrigins: ["http://localhost:5173"]
+            AllowedOrigins: !If
+              - IsDev
+              - [!Sub "https://${WebDistribution.DomainName}", "http://localhost:5173"]
+              - [!Sub "https://${WebDistribution.DomainName}"]
             AllowedHeaders: ["*"]
             MaxAge: 3000
       LifecycleConfiguration:
@@ -129,14 +126,115 @@ Resources:
                 "aws:SecureTransport": "false"
 
   # ---------------------------------------------------------------------
-  # CloudFront deferred (infra/README.md "CloudFront deferred"): AWS returned
-  # "Access denied ... Your account must be verified before you can add new
-  # CloudFront resources" on WebDistribution, which rolled back the whole
-  # stack. WebBucket/WebOAC/WebHeadersPolicy/WebDistribution/WebBucketPolicy
-  # are saved in template-web-hosting.yaml.deferred — paste them back here
-  # (and restore the two Outputs + UploadBucket CORS origin) once AWS Support
-  # verifies the account. Not needed until phase 4 (frontend) regardless.
+  # Web hosting — S3 + CloudFront (restored from template-web-hosting.yaml.deferred
+  # after AWS Support verified the account for CloudFront, 2026-09-25)
   # ---------------------------------------------------------------------
+  WebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub resume-screener-web-${EnvName}-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  WebOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub rs-web-oac-${EnvName}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  WebHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub rs-web-headers-${EnvName}
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: same-origin
+            Override: true
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: !Sub >-
+              default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';
+              connect-src 'self' https://*.execute-api.${AWS::Region}.amazonaws.com
+              https://cognito-idp.${AWS::Region}.amazonaws.com
+              https://*.s3.${AWS::Region}.amazonaws.com https://*.s3.amazonaws.com;
+              frame-ancestors 'none'
+
+  WebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_200
+        Origins:
+          - Id: web
+            DomainName: !GetAtt WebBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            OriginAccessControlId: !GetAtt WebOAC.Id
+        DefaultCacheBehavior:
+          TargetOriginId: web
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
+          ResponseHeadersPolicyId: !Ref WebHeadersPolicy
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${WebBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${WebDistribution}"
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt WebBucket.Arn
+              - !Sub "${WebBucket.Arn}/*"
+            Condition:
+              Bool:
+                "aws:SecureTransport": "false"
+
+  # -------------------------------------------------------------------
   # DynamoDB
   # ---------------------------------------------------------------------
   JobsTable:
@@ -1130,8 +1228,9 @@ Resources:
 
 Outputs:
   UploadBucketName: {Value: !Ref UploadBucket}
-  # WebBucketName / DistributionId / DistributionDomain: restored with
-  # template-web-hosting.yaml.deferred once CloudFront is unblocked.
+  WebBucketName: {Value: !Ref WebBucket}
+  DistributionId: {Value: !Ref WebDistribution}
+  DistributionDomain: {Value: !GetAtt WebDistribution.DomainName}
   JobsTableName: {Value: !Ref JobsTable}
   CandidatesTableName: {Value: !Ref CandidatesTable}
   FailedJobsTableName: {Value: !Ref FailedJobsTable}
