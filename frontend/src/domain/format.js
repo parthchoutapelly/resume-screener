@@ -47,3 +47,11 @@ export function csvEscape(value) {
   if (/[,"\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
   return s;
 }
+
+/** Return an accessible, non-empty title for a job posting. */
+export function getJobAccessibleTitle(job) {
+  if (job?.job_title && typeof job.job_title === 'string' && job.job_title.trim().length > 0) {
+    return job.job_title.trim();
+  }
+  return job?.job_id || 'Untitled Job';
+}

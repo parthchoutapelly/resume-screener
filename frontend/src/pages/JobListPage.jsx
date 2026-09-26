@@ -6,6 +6,7 @@ import CountUp from '../components/ui/CountUp';
 import StatusMark from '../components/ui/StatusMark';
 import Tooltip from '../components/ui/Tooltip';
 import { AnimatedRow } from '../components/ui/AnimatedList';
+import { getJobAccessibleTitle } from '../domain/format';
 import { config } from '../config';
 
 const api = config.useMocks
@@ -100,7 +101,7 @@ export default function JobListPage() {
   if (loading) {
     return (
       <div className="loading-page">
-        <div className="spinner spinner--lg" aria-label="Loading jobs" />
+        <div className="spinner spinner--lg" role="status" aria-label="Loading jobs" />
         <span>Loading talent pipeline…</span>
       </div>
     );
@@ -203,32 +204,35 @@ export default function JobListPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredJobs.map((job, idx) => (
-                <AnimatedRow
-                  key={job.job_id}
-                  index={idx}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => navigate(`/jobs/${job.job_id}`)}
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') navigate(`/jobs/${job.job_id}`);
-                  }}
-                  aria-label={`View job: ${job.job_title}`}
-                >
-                  <td>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <Link
-                        to={`/jobs/${job.job_id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ color: 'var(--color-text)', fontWeight: 600, fontSize: '13px' }}
-                      >
-                        {job.job_title}
-                      </Link>
-                      <span className="mono" style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
-                        {job.job_id}
-                      </span>
-                    </div>
-                  </td>
+              {filteredJobs.map((job, idx) => {
+                const titleText = getJobAccessibleTitle(job);
+                return (
+                  <AnimatedRow
+                    key={job.job_id}
+                    index={idx}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => navigate(`/jobs/${job.job_id}`)}
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') navigate(`/jobs/${job.job_id}`);
+                    }}
+                    aria-label={`View job: ${titleText}`}
+                  >
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <Link
+                          to={`/jobs/${job.job_id}`}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{ color: 'var(--color-text)', fontWeight: 600, fontSize: '13px' }}
+                          aria-label={`View job: ${titleText}`}
+                        >
+                          {titleText}
+                        </Link>
+                        <span className="mono" style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
+                          {job.job_id}
+                        </span>
+                      </div>
+                    </td>
                   <td>
                     <JobStatusBadge job={job} />
                   </td>
@@ -263,7 +267,8 @@ export default function JobListPage() {
                     </Tooltip>
                   </td>
                 </AnimatedRow>
-              ))}
+              );
+            })}
             </tbody>
           </table>
 

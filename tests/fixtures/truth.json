@@ -8,7 +8,11 @@
       "dynamodb",
       "kubernetes",
       "ci/cd",
-      "sql"
+      "sql",
+      "java",
+      "postgresql",
+      "leadership",
+      "github actions"
     ],
     "titles_held": [
       "senior backend engineer",
@@ -27,7 +31,8 @@
       "aws",
       "docker",
       "rest api",
-      "git"
+      "git",
+      "microservices"
     ],
     "titles_held": [
       "backend developer"
@@ -70,6 +75,9 @@
   "eleven_pages.pdf": {
     "expected_error_code": "too_many_pages"
   },
+  "encrypted.pdf": {
+    "expected_error_code": "unreadable_document"
+  },
   "jordan_rivera.png": {
     "email": "jordan.rivera@example-mail.test",
     "name": "Jordan Rivera",
@@ -103,6 +111,74 @@
   "renamed_text_file.pdf": {
     "expected_error_code": "unsupported_format"
   },
+  "lena_kowalski.docx": {
+    "email": "lena.kowalski@example-mail.test",
+    "name": "Lena Kowalski",
+    "notes": "DOCX fixture — data engineer profile with Spark/Pandas/SQL.",
+    "skills": [
+      "python",
+      "sql",
+      "spark",
+      "aws",
+      "git",
+      "airflow",
+      "pandas",
+      "postgresql",
+      "redshift",
+      "etl",
+      "excel"
+    ],
+    "titles_held": [
+      "data engineer"
+    ],
+    "total_experience_years_approx": 8.0
+  },
+  "omar_hassan_scanned.pdf": {
+    "email": "omar.hassan@example-mail.test",
+    "name": "Omar Hassan",
+    "notes": "Scanned PDF fixture (OCR path) — frontend engineer profile.",
+    "skills": [
+      "javascript",
+      "react",
+      "aws",
+      "git",
+      "typescript",
+      "redux",
+      "node.js",
+      "graphql",
+      "html",
+      "css",
+      "cloudfront",
+      "rest api"
+    ],
+    "titles_held": [
+      "frontend engineer"
+    ],
+    "total_experience_years_approx": 7.2
+  },
+  "priya_sharma_native.pdf": {
+    "email": "priya.sharma@example-mail.test",
+    "name": "Priya Sharma",
+    "notes": "Native PDF fixture — DevOps/SRE profile with CI/CD and Kubernetes.",
+    "skills": [
+      "python",
+      "aws",
+      "kubernetes",
+      "docker",
+      "ci/cd",
+      "linux",
+      "terraform",
+      "prometheus",
+      "jenkins",
+      "github actions",
+      "grafana"
+    ],
+    "titles_held": [
+      "site reliability engineer",
+      "devops engineer"
+    ],
+    "total_experience_years_approx": 10.6
+  },
   "worked_example_native.pdf": {
     "email": "jane.doe@example-mail.test",
     "name": "Jane Doe",
@@ -110,11 +186,12 @@
     "skills": [
       "python",
       "aws",
-      "sql"
+      "sql",
+      "rest api"
     ],
     "titles_held": [
       "backend developer"
     ],
-    "total_experience_years_approx": 4.0
+    "total_experience_years_approx": 5.7
   }
 }

@@ -625,7 +625,7 @@ export default function JobDetailPage() {
   if (loading) {
     return (
       <div className="loading-page">
-        <div className="spinner spinner--lg" aria-label="Loading job details" />
+        <div className="spinner spinner--lg" role="status" aria-label="Loading job details" />
         <span>Loading requisition pipeline…</span>
       </div>
     );

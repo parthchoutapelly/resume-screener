@@ -118,7 +118,7 @@ export default function FailedJobsPage() {
   if (loading) {
     return (
       <div className="loading-page">
-        <div className="spinner spinner--lg" aria-label="Loading failures" />
+        <div className="spinner spinner--lg" role="status" aria-label="Loading failures" />
         <span>Loading system failures…</span>
       </div>
     );

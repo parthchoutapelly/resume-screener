@@ -40,21 +40,23 @@ export default function FileDropZone({ onFiles, multiple = true, label = 'Drop f
   };
 
   return (
-    <div
-      className={'drop-zone' + (active ? ' drop-zone--active' : '')}
-      onDragOver={(e) => { e.preventDefault(); setActive(true); }}
-      onDragLeave={() => setActive(false)}
-      onDrop={handleDrop}
-      onClick={() => inputRef.current?.click()}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click(); }}
-      role="button"
-      tabIndex={0}
-      aria-label={label}
-    >
-      <div className="drop-zone__title">{label}</div>
-      <p style={{ fontSize: 'var(--font-size-sm)', marginTop: 'var(--space-1)' }}>
-        PDF, DOCX, PNG, JPG, TIFF · Max 10 MB each
-      </p>
+    <>
+      <div
+        className={'drop-zone' + (active ? ' drop-zone--active' : '')}
+        onDragOver={(e) => { e.preventDefault(); setActive(true); }}
+        onDragLeave={() => setActive(false)}
+        onDrop={handleDrop}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click(); }}
+        role="button"
+        tabIndex={0}
+        aria-label={label}
+      >
+        <div className="drop-zone__title">{label}</div>
+        <p style={{ fontSize: 'var(--font-size-sm)', marginTop: 'var(--space-1)' }}>
+          PDF, DOCX, PNG, JPG, TIFF · Max 10 MB each
+        </p>
+      </div>
       <input
         ref={inputRef}
         type="file"
@@ -65,6 +67,6 @@ export default function FileDropZone({ onFiles, multiple = true, label = 'Drop f
         tabIndex={-1}
         aria-hidden="true"
       />
-    </div>
+    </>
   );
 }

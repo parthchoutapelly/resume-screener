@@ -106,6 +106,7 @@ export default function StatusMark({
   return (
     <span
       className={`status-mark status-mark--${resolvedTone} ${isPulsing ? 'status-mark--pulsing' : ''} ${className}`}
+      role="img"
       title={displayTitle}
       aria-label={displayTitle}
       style={{
