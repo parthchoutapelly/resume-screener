@@ -357,6 +357,10 @@ def test_s18_api_gateway_tls_security_policy():
         f"Expected SecurityPolicy_TLS12_PFS_2025_EDGE, got {sec_policy}"
     )
 
+    # EndpointAccessMode configured to satisfy 2025 EDGE TLS security policy
+    access_mode = recruiter_api.get("EndpointAccessMode")
+    assert access_mode == "BASIC", f"Expected EndpointAccessMode to be BASIC, got {access_mode}"
+
     # API endpoint configuration must not alter endpoint type
     endpoint_config = recruiter_api.get("EndpointConfiguration")
     if endpoint_config:
@@ -372,9 +376,15 @@ def test_s19_api_gateway_access_logging_configured():
     access_log = recruiter_api.get("AccessLogSetting")
     assert access_log is not None, "AccessLogSetting must be configured on RecruiterApi"
 
-    # Destination references API access log group
+    # Destination references API access log group without trailing :*
+    assert "ApiAccessLogGroup" in tmpl["Resources"], "ApiAccessLogGroup resource must exist"
     dest_arn = str(access_log.get("DestinationArn", ""))
-    assert "ApiAccessLogGroup" in dest_arn, "DestinationArn must reference ApiAccessLogGroup"
+    assert "log-group:/aws/apigateway/rs-api-" in dest_arn, (
+        f"DestinationArn must target the API access log group, got: {dest_arn}"
+    )
+    assert not dest_arn.endswith(":*"), (
+        f"DestinationArn must not contain trailing :* (got {dest_arn})"
+    )
 
     # Format contains requestId
     fmt_str = access_log.get("Format", "")

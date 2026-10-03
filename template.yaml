@@ -616,17 +616,38 @@ Resources:
           ]
         }
 
+  ApiGatewayCloudWatchRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "rs-apigateway-cw-role-${EnvName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchRole.Arn
+
   # ---------------------------------------------------------------------
   # REST API — Cognito authorizer, single CORS origin, throttled (R-AUTH-01, R-SEC-07/10)
   # ---------------------------------------------------------------------
   RecruiterApi:
     Type: AWS::Serverless::Api
+    DependsOn: ApiGatewayAccount
     Properties:
       Name: !Sub rs-api-${EnvName}
       StageName: !Ref EnvName
       SecurityPolicy: SecurityPolicy_TLS12_PFS_2025_EDGE
+      EndpointAccessMode: BASIC
       AccessLogSetting:
-        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        DestinationArn: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/rs-api-${EnvName}"
         Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","caller":"$context.authorizer.claims.sub","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency","responseLatency":"$context.responseLatency","tlsVersion":"$context.tlsVersion","cipherSuite":"$context.cipherSuite"}'
       Cors:
         AllowOrigin: !Sub "'${AllowedOrigin}'"
