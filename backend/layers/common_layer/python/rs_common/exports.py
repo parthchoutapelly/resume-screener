@@ -11,7 +11,8 @@ COLUMNS = ["name", "email", "skills", "titles_held", "total_experience_years", "
 
 def csv_safe(v) -> str:
     s = "" if v is None else str(v)
-    return "'" + s if s[:1] in ("=", "+", "-", "@", "\t", "\r") else s
+    stripped = s.lstrip()
+    return "'" + s if stripped[:1] in ("=", "+", "-", "@") or s[:1] in ("\t", "\r") else s
 
 
 def build_csv(rows: list[dict]) -> bytes:

@@ -205,3 +205,112 @@ def test_s14_self_signup_disabled_in_template():
 
     # Verify UserPool resource explicitly sets AllowAdminCreateUserOnly: true
     assert "AllowAdminCreateUserOnly: true" in yaml_content
+
+
+# ---------------------------------------------------------------------------
+# S9 (Extended): CSV injection with leading whitespace / tabs
+# ---------------------------------------------------------------------------
+def test_s9_csv_whitespace_injection_defusing():
+    from rs_common.exports import build_csv, csv_safe
+
+    # Leading-whitespace bypassed formulas must be sanitized
+    for dangerous in (
+        "   =SUM(A1:A10)",
+        "\t =cmd|' /C calc'!A0",
+        "  -5+5",
+        " \t @SUM(1+1)",
+        "\t=1+1",
+    ):
+        defused = csv_safe(dangerous)
+        assert defused.startswith(
+            "'"
+        ), f"Whitespace-prefixed formula {dangerous!r} must start with single quote"
+
+    # Safe cells remain unaltered
+    assert csv_safe("   Jane Doe") == "   Jane Doe"
+    assert csv_safe("Senior Engineer") == "Senior Engineer"
+
+    # Verify generated CSV defuses whitespace-prefixed rows
+    records = [
+        {
+            "name": '   =HYPERLINK("http://evil.com", "Click Me")',
+            "email": "malicious@example.com",
+            "skills": ["python"],
+            "titles_held": ["engineer"],
+            "total_experience_years": 5.0,
+            "match_score": 90.0,
+            "decided_at": "2026-09-26T12:00:00Z",
+        }
+    ]
+    csv_bytes = build_csv(records)
+    csv_text = csv_bytes.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(csv_text))
+    row = next(reader)
+    assert row["name"].startswith("'")
+
+
+# ---------------------------------------------------------------------------
+# S16: Frontend window.open prevents reverse tabnabbing
+# ---------------------------------------------------------------------------
+def test_s16_frontend_window_open_reverse_tabnabbing_protected():
+    import re
+
+    page_path = REPO_ROOT / "frontend" / "src" / "pages" / "JobDetailPage.jsx"
+    with open(page_path, encoding="utf-8") as f:
+        content = f.read()
+
+    # Find all window.open invocations in JobDetailPage
+    matches = re.findall(r"window\.open\(([^)]+)\)", content)
+    assert len(matches) > 0, "Expected at least one window.open call in JobDetailPage"
+    for args in matches:
+        assert (
+            "noopener" in args and "noreferrer" in args
+        ), f"window.open call ({args}) must include 'noopener,noreferrer' to prevent reverse tabnabbing"
+
+
+# ---------------------------------------------------------------------------
+# S17: Job title phishing & email content abuse prevention
+# ---------------------------------------------------------------------------
+@mock_aws
+def test_s17_job_title_phishing_rejected(aws, handler):
+    from conftest import api_event, call
+
+    h = handler("create_job_posting")
+
+    # Titles with URLs or emails are rejected with 400
+    for phish in (
+        "Backend Engineer https://phish.example.com",
+        "Developer (http://evil.com/apply)",
+        "QA Lead www.scam-site.org",
+        "Send CV to recruiter@fake-phish.net",
+    ):
+        s, b = call(
+            h,
+            api_event(
+                body={
+                    "job_title": phish,
+                    "jd": {"source": "none"},
+                    "required_skills": ["python"],
+                }
+            ),
+        )
+        assert s == 400
+        assert b["error"]["code"] == "VALIDATION_FAILED"
+        assert any(
+            d["field"] == "job_title" and d["issue"] == "must_not_contain_urls_or_emails"
+            for d in b["error"]["details"]
+        )
+
+    # Legitimate titles with punctuation accepted
+    s_ok, b_ok = call(
+        h,
+        api_event(
+            body={
+                "job_title": "Senior Node.js & React Engineer (Full-Time)",
+                "jd": {"source": "none"},
+                "required_skills": ["python"],
+            }
+        ),
+    )
+    assert s_ok == 201
+    assert "job_id" in b_ok

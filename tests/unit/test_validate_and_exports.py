@@ -175,3 +175,82 @@ def test_build_csv_columns_bom_and_escaping():
     assert lines[0] == "name,email,skills,titles_held,total_experience_years,match_score,decided_at"
     assert lines[1].startswith("'=HYPERLINK(evil),a@b.com,aws; python,backend developer,4.0,71.3,")
     assert "José Ñandú" in lines[2]
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "=1+1",
+        "+1+1",
+        "-1+1",
+        "@SUM(1+1)",
+        "\tx",
+        "\rx",
+        "   =1+1",
+        "\t =1+1",
+        "   +cmd|' /C calc'!A0",
+        " \t -1+1",
+        "   @SUM(1+1)",
+        "\t=1+1",
+    ],
+)
+def test_csv_safe_whitespace_prefixed_formula_starters(cell):
+    assert exports.csv_safe(cell) == "'" + cell
+
+
+@pytest.mark.parametrize(
+    "normal_val",
+    [
+        "Jane Doe",
+        "   Jane Doe",
+        "Senior Developer",
+        "5.0",
+        "jane.doe@example.com",
+        "   ",
+        "",
+        None,
+    ],
+)
+def test_csv_safe_normal_values_preserved(normal_val):
+    expected = "" if normal_val is None else normal_val
+    assert exports.csv_safe(normal_val) == expected
+
+
+@pytest.mark.parametrize(
+    "phishing_title",
+    [
+        "Backend Engineer https://evil.com",
+        "Software Developer http://phish.site/apply",
+        "QA Lead (www.evil-site.com)",
+        "Engineer at company.com/careers",
+        "Send resume to recruiter@phish.com",
+        "Developer evil.com",
+        "SRE ftp://files.malicious.net",
+    ],
+)
+def test_job_title_phishing_and_email_rejection(phishing_title):
+    with pytest.raises(HttpError) as ei:
+        validate.create_job(ok(job_title=phishing_title))
+    assert ei.value.status == 400
+    assert any(
+        d["field"] == "job_title" and d["issue"] == "must_not_contain_urls_or_emails"
+        for d in ei.value.details
+    )
+
+
+@pytest.mark.parametrize(
+    "legit_title",
+    [
+        "Senior Software Engineer",
+        "Node.js & React Developer",
+        "ASP.NET Core Web Architect",
+        "C++ / C# Developer (AI & ML)",
+        "DevOps / SRE [Remote]",
+        "VP of Engineering - Core Platform",
+        "Back-End Engineer (Python/Django)",
+        "Frontend Developer: Angular, TypeScript",
+    ],
+)
+def test_job_title_legitimate_variations_accepted(legit_title):
+    res = validate.create_job(ok(job_title=legit_title))
+    assert res["job_title"] == legit_title

@@ -359,6 +359,34 @@ def test_eleven_page_pdf_is_terminal_too_many_pages(monkeypatch, extraction_modu
 
 
 @mock_aws
+def test_oversized_canvas_pdf_is_terminal_unreadable(monkeypatch, extraction_module, tmp_path):
+    import fitz
+
+    lam = FakeLambdaClient(response={})
+    s3, ddb = _setup(monkeypatch, extraction_module, lam)
+    _make_candidate_placeholder(ddb, "job_1", "cand_1")
+
+    # Create a 1-page PDF with canvas dimensions > 3,000 pt (e.g. 4,000 x 4,000 pt)
+    # with text < 40 chars so it hits the OCR path
+    pdf_path = tmp_path / "oversized.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=4000, height=4000)
+    page.insert_text((50, 50), "scan")
+    doc.save(str(pdf_path))
+    doc.close()
+
+    key = "resume-uploads/job_1/cand_1/resume.pdf"
+    _upload(s3, BUCKET, key, pdf_path)
+
+    extraction_module.lambda_handler(_sqs_event(BUCKET, key), None)
+
+    item = ddb.Table(CANDIDATES_TABLE).get_item(Key={"job_id": "job_1", "candidate_id": "cand_1"})["Item"]
+    assert item["parse_status"] == "error"
+    assert item["error_code"] == "unreadable_document"
+    assert lam.calls == []
+
+
+@mock_aws
 def test_orphan_object_key_no_placeholder(monkeypatch, extraction_module):
     lam = FakeLambdaClient(response={})
     s3, ddb = _setup(monkeypatch, extraction_module, lam)

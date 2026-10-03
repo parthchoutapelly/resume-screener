@@ -196,7 +196,7 @@ function ScoreBreakdown({ candidate }) {
                 onClick={async () => {
                   try {
                     const { url } = await api.resumeUrl(candidate.job_id, candidate.candidate_id);
-                    window.open(url, '_blank');
+                    window.open(url, '_blank', 'noopener,noreferrer');
                   } catch {
                     addToast('Could not generate view link.');
                   }

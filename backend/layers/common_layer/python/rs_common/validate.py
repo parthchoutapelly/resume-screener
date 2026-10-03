@@ -11,6 +11,7 @@ functions the NLP uses (R-VAL-08), so an explicit "JS" and a resume's
 from __future__ import annotations
 
 import math
+import re
 from typing import Any
 
 from rs_common import normalization as norm
@@ -40,6 +41,22 @@ def _fail(details: list[dict]) -> HttpError:
 
 def _has_control(s: str) -> bool:
     return any(ord(c) < 32 or ord(c) == 127 for c in s)
+
+
+_PHISHING_RE = re.compile(
+    r"(?i)(?:"
+    r"https?://\S+"
+    r"|ftp://\S+"
+    r"|\bwww\.[a-z0-9.-]+\.[a-z]{2,}\b"
+    r"|\b[a-z0-9.-]+\.[a-z]{2,}/[^\s]*"
+    r"|\b[a-z0-9.-]+\.(?:com|org|biz|info|xyz|site|top|online)\b"
+    r"|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}"
+    r")"
+)
+
+
+def _has_url_or_email(s: str) -> bool:
+    return bool(_PHISHING_RE.search(s))
 
 
 def ext_of(filename: str) -> str:
@@ -111,6 +128,8 @@ def create_job(body: dict) -> dict:
     title = body.get("job_title")
     if not isinstance(title, str) or not (1 <= len(title.strip()) <= 200) or _has_control(title):
         details.append({"field": "job_title", "issue": "must_be_1_to_200_chars"})
+    elif _has_url_or_email(title):
+        details.append({"field": "job_title", "issue": "must_not_contain_urls_or_emails"})
 
     jd_out: dict = {}
     jd = body.get("jd")

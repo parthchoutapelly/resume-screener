@@ -40,6 +40,9 @@ MAX_TEXT_CHARS = 100_000
 RESUME_EXT = {"pdf", "docx", "png", "jpg", "jpeg", "tiff"}
 JD_EXT = RESUME_EXT | {"txt"}  # txt only exists when the API wrote a pasted JD (D-45)
 
+MAX_PAGE_DIMENSION_POINTS = 3000  # audit limit: max width/height in points (~41.6 in)
+MAX_RASTER_PIXELS = 25_000_000  # audit limit: max rasterization pixel budget (25 MP)
+
 Image.MAX_IMAGE_PIXELS = 50_000_000  # decompression-bomb guard (R-SEC-05)
 
 s3 = boto3.client("s3")
@@ -212,9 +215,25 @@ def extract_pdf(path: str) -> tuple[str, dict]:
         try:
             with fitz.open(path) as doc:
                 for i in ocr_idx:
-                    pix = doc[i].get_pixmap(dpi=OCR_DPI, alpha=False)
+                    page = doc[i]
+                    rect = page.rect
+                    calc_w = int(rect.width * OCR_DPI / 72)
+                    calc_h = int(rect.height * OCR_DPI / 72)
+                    if (
+                        rect.width > MAX_PAGE_DIMENSION_POINTS
+                        or rect.height > MAX_PAGE_DIMENSION_POINTS
+                        or (calc_w * calc_h) > MAX_RASTER_PIXELS
+                    ):
+                        raise TerminalError(
+                            C.UNREADABLE_DOCUMENT,
+                            S.PDF_EXTRACT,
+                            f"page {i+1} dimensions too large ({int(rect.width)}x{int(rect.height)})",
+                        )
+                    pix = page.get_pixmap(dpi=OCR_DPI, alpha=False)
                     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
                     pages[i] = pytesseract.image_to_string(img, lang="eng")  # real OCR (R-HON-03)
+        except TerminalError:
+            raise
         except Exception as e:
             raise TransientError(S.OCR, f"OCR failed: {type(e).__name__}") from e
 

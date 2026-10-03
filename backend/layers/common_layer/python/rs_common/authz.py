@@ -48,7 +48,7 @@ def require_admin(c: Caller) -> None:
 
 def load_job_for(c: Caller, job_id: str) -> dict:
     """Missing and not-owned are the same 404 (R-AUTH-04)."""
-    job = _JOBS.get_item(Key={"job_id": job_id}).get("Item")
+    job = _JOBS.get_item(Key={"job_id": job_id}, ConsistentRead=True).get("Item")
     if not job or (job["recruiter_id"] != c.sub and not c.is_admin):
         raise HttpError(404, "NOT_FOUND", "Job not found.")
     return job

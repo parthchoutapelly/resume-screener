@@ -146,3 +146,19 @@ def test_api_handler_403_carries_cors_headers():
     r = h(claims_event(None), None)
     assert r["statusCode"] == 403
     assert r["headers"]["Access-Control-Allow-Origin"] == "https://app.example"
+
+
+def test_load_job_for_uses_consistent_read(monkeypatch):
+    calls = []
+
+    class FakeTable:
+        def get_item(self, **kwargs):
+            calls.append(kwargs)
+            return {"Item": {"job_id": "job_1", "recruiter_id": "u1"}}
+
+    monkeypatch.setattr(authz, "_JOBS", FakeTable())
+    c = authz.Caller("u1", frozenset({"Recruiter"}))
+    job = authz.load_job_for(c, "job_1")
+    assert job["job_id"] == "job_1"
+    assert len(calls) == 1
+    assert calls[0].get("ConsistentRead") is True
