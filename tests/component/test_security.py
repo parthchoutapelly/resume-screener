@@ -18,9 +18,12 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
+
+import yaml
 
 from conftest import (
     CANDIDATES_TABLE,
@@ -314,3 +317,164 @@ def test_s17_job_title_phishing_rejected(aws, handler):
     )
     assert s_ok == 201
     assert "job_id" in b_ok
+
+
+# ---------------------------------------------------------------------------
+# S18: API Gateway TLS security policy configured
+# ---------------------------------------------------------------------------
+class _CfnLoader(yaml.SafeLoader):
+    pass
+
+
+def _cfn_default_ctor(loader, tag_suffix, node):
+    if isinstance(node, yaml.ScalarNode):
+        return loader.construct_scalar(node)
+    elif isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    elif isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node)
+    return None
+
+
+_CfnLoader.add_multi_constructor("!", _cfn_default_ctor)
+
+
+def _load_cfn_template() -> dict:
+    template_path = REPO_ROOT / "template.yaml"
+    with open(template_path, encoding="utf-8") as f:
+        return yaml.load(f, Loader=_CfnLoader)
+
+
+def test_s18_api_gateway_tls_security_policy():
+    """Verify RecruiterApi configures the modern PFS-enabled TLS 1.2 EDGE security policy."""
+    tmpl = _load_cfn_template()
+    recruiter_api = tmpl["Resources"]["RecruiterApi"]["Properties"]
+
+    # SecurityPolicy exists and specifies SecurityPolicy_TLS12_PFS_2025_EDGE
+    sec_policy = recruiter_api.get("SecurityPolicy")
+    assert sec_policy is not None, "SecurityPolicy must be configured on RecruiterApi"
+    assert sec_policy == "SecurityPolicy_TLS12_PFS_2025_EDGE", (
+        f"Expected SecurityPolicy_TLS12_PFS_2025_EDGE, got {sec_policy}"
+    )
+
+    # API endpoint configuration must not alter endpoint type
+    endpoint_config = recruiter_api.get("EndpointConfiguration")
+    if endpoint_config:
+        assert endpoint_config.get("Type", "EDGE") == "EDGE"
+
+
+def test_s19_api_gateway_access_logging_configured():
+    """Verify API Gateway access logging format, destination, and method metrics."""
+    tmpl = _load_cfn_template()
+    recruiter_api = tmpl["Resources"]["RecruiterApi"]["Properties"]
+
+    # AccessLogSetting exists
+    access_log = recruiter_api.get("AccessLogSetting")
+    assert access_log is not None, "AccessLogSetting must be configured on RecruiterApi"
+
+    # Destination references API access log group
+    dest_arn = str(access_log.get("DestinationArn", ""))
+    assert "ApiAccessLogGroup" in dest_arn, "DestinationArn must reference ApiAccessLogGroup"
+
+    # Format contains requestId
+    fmt_str = access_log.get("Format", "")
+    assert "$context.requestId" in fmt_str, "Access log format must include $context.requestId"
+    fmt_json = json.loads(fmt_str)
+    assert "requestId" in fmt_json or any("requestId" in k for k in fmt_json.keys())
+
+    # Format does not contain Authorization/token/password/body fields
+    forbidden_terms = ("authorization", "token", "password", "body", "secret", "bearer")
+    for term in forbidden_terms:
+        assert term not in fmt_str.lower(), f"Access log format must not contain {term}"
+
+    # Format contains TLS metadata
+    assert "$context.tlsVersion" in fmt_str, "Access log format must include $context.tlsVersion"
+    assert "$context.cipherSuite" in fmt_str, "Access log format must include $context.cipherSuite"
+    assert "tlsVersion" in fmt_json
+    assert "cipherSuite" in fmt_json
+
+    # API method metrics enabled
+    method_settings = recruiter_api.get("MethodSettings", [])
+    assert len(method_settings) > 0, "MethodSettings must be defined on RecruiterApi"
+    assert any(
+        setting.get("MetricsEnabled") is True for setting in method_settings
+    ), "MethodSettings must enable MetricsEnabled"
+
+
+def test_s20_cognito_password_policy_requires_symbols():
+    """Verify Cognito UserPool enforces symbol requirement."""
+    tmpl = _load_cfn_template()
+    pwd_policy = tmpl["Resources"]["UserPool"]["Properties"]["Policies"]["PasswordPolicy"]
+    assert pwd_policy.get("RequireSymbols") is True, "PasswordPolicy must require symbols"
+
+
+def test_s21_cloudfront_security_headers_complete():
+    """Verify CloudFront response headers policy includes required CSP directives and Permissions-Policy."""
+    tmpl = _load_cfn_template()
+    headers_config = tmpl["Resources"]["WebHeadersPolicy"]["Properties"]["ResponseHeadersPolicyConfig"]
+
+    # CSP exists and contains required directives
+    csp_config = headers_config.get("SecurityHeadersConfig", {}).get("ContentSecurityPolicy", {})
+    assert csp_config is not None, "ContentSecurityPolicy must be configured"
+    csp_str = csp_config.get("ContentSecurityPolicy", "")
+
+    assert "script-src 'self'" in csp_str, "CSP must explicitly include script-src 'self'"
+    assert "base-uri 'self'" in csp_str, "CSP must include base-uri 'self'"
+    assert "form-action 'self'" in csp_str, "CSP must include form-action 'self'"
+
+    # Permissions-Policy exists and contains required restricted features
+    custom_items = headers_config.get("CustomHeadersConfig", {}).get("Items", [])
+    perm_header = next((i for i in custom_items if i.get("Header") == "Permissions-Policy"), None)
+    assert perm_header is not None, "Permissions-Policy custom header must be configured"
+
+    perm_val = perm_header.get("Value", "")
+    for feature in ("camera=()", "microphone=()", "geolocation=()", "payment=()", "usb=()"):
+        assert feature in perm_val, f"Permissions-Policy must restrict {feature}"
+
+
+def test_s22_api_lambda_alarms_declared():
+    """Verify CloudWatch error alarms for key API lambdas and aggregate throttle alarm."""
+    tmpl = _load_cfn_template()
+    resources = tmpl["Resources"]
+
+    required_alarms = {
+        "CreateJobPostingErrors": "CreateJobPostingFunction",
+        "AddResumesErrors": "AddResumesFunction",
+        "UpdateCandidateDecisionErrors": "UpdateCandidateDecisionFunction",
+    }
+
+    for alarm_name, func_resource in required_alarms.items():
+        assert alarm_name in resources, f"Alarm {alarm_name} must be declared in template"
+        alarm = resources[alarm_name]
+        props = alarm.get("Properties", {})
+        assert props.get("MetricName") == "Errors"
+        assert props.get("Namespace") == "AWS/Lambda"
+        dimensions = props.get("Dimensions", [])
+        assert any(
+            d.get("Name") == "FunctionName" and func_resource in str(d.get("Value")) for d in dimensions
+        ), f"{alarm_name} must monitor {func_resource}"
+        actions = props.get("AlarmActions", [])
+        assert any("AlertsTopic" in str(a) for a in actions), f"{alarm_name} must notify AlertsTopic"
+
+    # Aggregate API Lambda throttle alarm exists
+    assert "ApiLambdaThrottles" in resources, "ApiLambdaThrottles aggregate alarm must be declared"
+    throttle_alarm = resources["ApiLambdaThrottles"]
+    t_props = throttle_alarm.get("Properties", {})
+    t_actions = t_props.get("AlarmActions", [])
+    assert any("AlertsTopic" in str(a) for a in t_actions), "ApiLambdaThrottles must notify AlertsTopic"
+
+    # Verify metrics or expression in throttle alarm
+    metrics = t_props.get("Metrics", [])
+    assert len(metrics) > 0, "ApiLambdaThrottles must define metric math for aggregate monitoring"
+    expr_metrics = [m for m in metrics if "Expression" in m]
+    assert len(expr_metrics) > 0, "ApiLambdaThrottles must include an aggregate expression"
+
+
+def test_s23_api_gateway_method_metrics_enabled():
+    """Verify API Gateway method metrics are explicitly enabled in template."""
+    tmpl = _load_cfn_template()
+    recruiter_api = tmpl["Resources"]["RecruiterApi"]["Properties"]
+    method_settings = recruiter_api.get("MethodSettings", [])
+    assert any(
+        setting.get("MetricsEnabled") is True for setting in method_settings
+    ), "RecruiterApi MethodSettings must have MetricsEnabled: true"

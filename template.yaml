@@ -176,11 +176,16 @@ Resources:
           ContentSecurityPolicy:
             Override: true
             ContentSecurityPolicy: !Sub >-
-              default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';
+              default-src 'self'; script-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';
               connect-src 'self' https://*.execute-api.${AWS::Region}.amazonaws.com
               https://cognito-idp.${AWS::Region}.amazonaws.com
               https://*.s3.${AWS::Region}.amazonaws.com https://*.s3.amazonaws.com;
-              frame-ancestors 'none'
+              frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+        CustomHeadersConfig:
+          Items:
+            - Header: Permissions-Policy
+              Value: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+              Override: true
 
   WebDistribution:
     Type: AWS::CloudFront::Distribution
@@ -372,7 +377,7 @@ Resources:
           RequireLowercase: true
           RequireUppercase: true
           RequireNumbers: true
-          RequireSymbols: false
+          RequireSymbols: true
           TemporaryPasswordValidityDays: 7
 
   UserPoolClient:
@@ -583,6 +588,34 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties: {LogGroupName: !Sub "/aws/lambda/rs-score-match-${EnvName}", RetentionInDays: 30}
 
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/rs-api-${EnvName}"
+      RetentionInDays: 30
+
+  ApiAccessLogsResourcePolicy:
+    Type: AWS::Logs::ResourcePolicy
+    Properties:
+      PolicyName: !Sub "rs-api-access-logs-policy-${EnvName}"
+      PolicyDocument: !Sub |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "apigateway.amazonaws.com"
+              },
+              "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+              ],
+              "Resource": "${ApiAccessLogGroup.Arn}:*"
+            }
+          ]
+        }
+
   # ---------------------------------------------------------------------
   # REST API — Cognito authorizer, single CORS origin, throttled (R-AUTH-01, R-SEC-07/10)
   # ---------------------------------------------------------------------
@@ -591,6 +624,10 @@ Resources:
     Properties:
       Name: !Sub rs-api-${EnvName}
       StageName: !Ref EnvName
+      SecurityPolicy: SecurityPolicy_TLS12_PFS_2025_EDGE
+      AccessLogSetting:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","caller":"$context.authorizer.claims.sub","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency","responseLatency":"$context.responseLatency","tlsVersion":"$context.tlsVersion","cipherSuite":"$context.cipherSuite"}'
       Cors:
         AllowOrigin: !Sub "'${AllowedOrigin}'"
         AllowMethods: "'GET,POST,PATCH,OPTIONS'"
@@ -613,7 +650,11 @@ Resources:
             Headers:
               Access-Control-Allow-Origin: !Sub "'${AllowedOrigin}'"
       MethodSettings:
-        - {ResourcePath: "/*", HttpMethod: "*", ThrottlingRateLimit: 20, ThrottlingBurstLimit: 40}
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          MetricsEnabled: true
+          ThrottlingRateLimit: 20
+          ThrottlingBurstLimit: 40
 
   # ---------------------------------------------------------------------
   # API functions — IAM exactly per docs/Architecture.md §8.1
@@ -1220,6 +1261,163 @@ Resources:
         - {Name: Stage, Value: !Ref EnvName}
       Statistic: Sum
       Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  CreateJobPostingErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-CreateJobPostingErrors-${EnvName}"
+      AlarmDescription: CreateJobPosting function raised an unhandled error
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref CreateJobPostingFunction}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  AddResumesErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-AddResumesErrors-${EnvName}"
+      AlarmDescription: AddResumes function raised an unhandled error
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref AddResumesFunction}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  UpdateCandidateDecisionErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-UpdateCandidateDecisionErrors-${EnvName}"
+      AlarmDescription: UpdateCandidateDecision function raised an unhandled error
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - {Name: FunctionName, Value: !Ref UpdateCandidateDecisionFunction}
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  ApiLambdaThrottles:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "rs-ApiLambdaThrottles-${EnvName}"
+      AlarmDescription: Any synchronous API Lambda function was throttled
+      Metrics:
+        - Id: m1
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Throttles
+              Dimensions: [{Name: FunctionName, Value: !Ref CreateJobPostingFunction}]
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: m2
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Throttles
+              Dimensions: [{Name: FunctionName, Value: !Ref AddResumesFunction}]
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: m3
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Throttles
+              Dimensions: [{Name: FunctionName, Value: !Ref GetJobsFunction}]
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: m4
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Throttles
+              Dimensions: [{Name: FunctionName, Value: !Ref GetJobFunction}]
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: m5
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Throttles
+              Dimensions: [{Name: FunctionName, Value: !Ref UpdateJobFunction}]
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: m6
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Throttles
+              Dimensions: [{Name: FunctionName, Value: !Ref GetCandidatesByJobFunction}]
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: m7
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Throttles
+              Dimensions: [{Name: FunctionName, Value: !Ref UpdateCandidateDecisionFunction}]
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: m8
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Throttles
+              Dimensions: [{Name: FunctionName, Value: !Ref GetResumeUrlFunction}]
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: m9
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Throttles
+              Dimensions: [{Name: FunctionName, Value: !Ref ExportShortlistCsvFunction}]
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: m10
+          MetricStat:
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Throttles
+              Dimensions: [{Name: FunctionName, Value: !Ref GetFailedJobsFunction}]
+            Period: 300
+            Stat: Sum
+          ReturnData: false
+        - Id: e1
+          Expression: "m1 + m2 + m3 + m4 + m5 + m6 + m7 + m8 + m9 + m10"
+          Label: TotalApiThrottles
+          ReturnData: true
       EvaluationPeriods: 1
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
