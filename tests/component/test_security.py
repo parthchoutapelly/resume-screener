@@ -488,3 +488,95 @@ def test_s23_api_gateway_method_metrics_enabled():
     assert any(
         setting.get("MetricsEnabled") is True for setting in method_settings
     ), "RecruiterApi MethodSettings must have MetricsEnabled: true"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Data Lifecycle & Resilience (S24–S27)
+# ---------------------------------------------------------------------------
+def test_s24_dynamodb_pitr_enabled_all_tables():
+    """Verify PointInTimeRecoverySpecification is enabled on all DynamoDB tables."""
+    tmpl = _load_cfn_template()
+    resources = tmpl["Resources"]
+    required_tables = ["JobsTable", "CandidatesTable", "FailedJobsTable", "ConfigTable"]
+
+    for table_logical_id in required_tables:
+        assert table_logical_id in resources, f"{table_logical_id} must be declared in template"
+        props = resources[table_logical_id].get("Properties", {})
+        pitr_spec = props.get("PointInTimeRecoverySpecification")
+        assert pitr_spec is not None, f"PointInTimeRecoverySpecification missing on {table_logical_id}"
+        assert pitr_spec.get("PointInTimeRecoveryEnabled") is True, (
+            f"PointInTimeRecoveryEnabled must be True on {table_logical_id}"
+        )
+
+
+def test_s25_dynamodb_deletion_protection_enabled_all_tables():
+    """Verify DeletionProtectionEnabled is True on all DynamoDB tables."""
+    tmpl = _load_cfn_template()
+    resources = tmpl["Resources"]
+    required_tables = ["JobsTable", "CandidatesTable", "FailedJobsTable", "ConfigTable"]
+
+    for table_logical_id in required_tables:
+        assert table_logical_id in resources, f"{table_logical_id} must be declared in template"
+        props = resources[table_logical_id].get("Properties", {})
+        assert props.get("DeletionProtectionEnabled") is True, (
+            f"DeletionProtectionEnabled must be True on {table_logical_id}"
+        )
+
+
+def test_s26_s3_upload_bucket_versioning_enabled():
+    """Verify S3 upload bucket has VersioningConfiguration enabled."""
+    tmpl = _load_cfn_template()
+    bucket = tmpl["Resources"]["UploadBucket"]["Properties"]
+    versioning = bucket.get("VersioningConfiguration")
+    assert versioning is not None, "VersioningConfiguration must be defined on UploadBucket"
+    assert versioning.get("Status") == "Enabled", (
+        f"VersioningConfiguration Status must be 'Enabled', got: {versioning.get('Status')}"
+    )
+
+
+def test_s27_s3_lifecycle_noncurrent_version_expiration_bounded():
+    """Verify S3 upload bucket lifecycle rules bound noncurrent version expiration and clean up delete markers."""
+    tmpl = _load_cfn_template()
+    bucket = tmpl["Resources"]["UploadBucket"]["Properties"]
+    lifecycle = bucket.get("LifecycleConfiguration", {})
+    rules = lifecycle.get("Rules", [])
+    assert len(rules) > 0, "UploadBucket must define LifecycleConfiguration Rules"
+
+    # Map rules by Id
+    rules_by_id = {r.get("Id"): r for r in rules}
+
+    # Verify existing object expiration rules and bounded noncurrent expiration
+    expected_expirations = {
+        "expire-exports": {"prefix": "exports/", "days": 7, "max_noncurrent": 30},
+        "expire-jds": {"prefix": "jd-uploads/", "days": 180, "max_noncurrent": 30},
+        "expire-resumes": {"prefix": "resume-uploads/", "days": 180, "max_noncurrent": 30},
+    }
+
+    for rule_id, expected in expected_expirations.items():
+        assert rule_id in rules_by_id, f"Lifecycle rule {rule_id} must exist"
+        rule = rules_by_id[rule_id]
+        assert rule.get("Status") == "Enabled", f"{rule_id} must be Enabled"
+        assert rule.get("Prefix") == expected["prefix"], f"{rule_id} prefix mismatch"
+        assert rule.get("ExpirationInDays") == expected["days"], (
+            f"{rule_id} ExpirationInDays must be {expected['days']}, got {rule.get('ExpirationInDays')}"
+        )
+
+        noncurrent = rule.get("NoncurrentVersionExpiration")
+        assert noncurrent is not None, f"{rule_id} must specify NoncurrentVersionExpiration"
+        nc_days = noncurrent.get("NoncurrentDays")
+        assert nc_days is not None, f"{rule_id} NoncurrentVersionExpiration must specify NoncurrentDays"
+        assert nc_days <= expected["max_noncurrent"], (
+            f"{rule_id} NoncurrentDays must be <= {expected['max_noncurrent']}, got {nc_days}"
+        )
+
+    # Verify cleanup-delete-markers rule
+    assert "cleanup-delete-markers" in rules_by_id, "cleanup-delete-markers rule must exist"
+    marker_rule = rules_by_id["cleanup-delete-markers"]
+    assert marker_rule.get("Status") == "Enabled", "cleanup-delete-markers rule must be Enabled"
+    assert marker_rule.get("ExpiredObjectDeleteMarker") is True, (
+        "cleanup-delete-markers rule must set ExpiredObjectDeleteMarker to True"
+    )
+    # Must NOT require NoncurrentVersionExpiration on cleanup-delete-markers
+    assert "NoncurrentVersionExpiration" not in marker_rule, (
+        "cleanup-delete-markers rule must not specify NoncurrentVersionExpiration"
+    )

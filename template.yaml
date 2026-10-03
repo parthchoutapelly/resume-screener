@@ -84,20 +84,31 @@ Resources:
               - [!Sub "https://${WebDistribution.DomainName}"]
             AllowedHeaders: ["*"]
             MaxAge: 3000
+      VersioningConfiguration:
+        Status: Enabled
       LifecycleConfiguration:
         Rules:
           - Id: expire-exports
             Status: Enabled
             Prefix: exports/
             ExpirationInDays: 7
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
           - Id: expire-jds
             Status: Enabled
             Prefix: jd-uploads/
             ExpirationInDays: 180
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
           - Id: expire-resumes
             Status: Enabled
             Prefix: resume-uploads/
             ExpirationInDays: 180
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+          - Id: cleanup-delete-markers
+            Status: Enabled
+            ExpiredObjectDeleteMarker: true
       NotificationConfiguration:
         QueueConfigurations:
           - Event: s3:ObjectCreated:*
@@ -248,6 +259,9 @@ Resources:
       TableName: !Sub jobs-${EnvName}
       BillingMode: PAY_PER_REQUEST
       SSESpecification: {SSEEnabled: true}
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
       AttributeDefinitions:
         - {AttributeName: job_id, AttributeType: S}
         - {AttributeName: recruiter_id, AttributeType: S}
@@ -267,6 +281,9 @@ Resources:
       TableName: !Sub candidates-${EnvName}
       BillingMode: PAY_PER_REQUEST
       SSESpecification: {SSEEnabled: true}
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
       AttributeDefinitions:
         - {AttributeName: job_id, AttributeType: S}
         - {AttributeName: candidate_id, AttributeType: S}
@@ -282,6 +299,9 @@ Resources:
       TableName: !Sub failed_jobs-${EnvName}
       BillingMode: PAY_PER_REQUEST
       SSESpecification: {SSEEnabled: true}
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
       AttributeDefinitions:
         - {AttributeName: job_id, AttributeType: S}
         - {AttributeName: failure_id, AttributeType: S}
@@ -298,6 +318,9 @@ Resources:
       TableName: !Sub config-${EnvName}
       BillingMode: PAY_PER_REQUEST
       SSESpecification: {SSEEnabled: true}
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
       AttributeDefinitions:
         - {AttributeName: config_key, AttributeType: S}
       KeySchema:
