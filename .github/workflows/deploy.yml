@@ -38,6 +38,10 @@ jobs:
     name: Run Quality Gates & Tests
     runs-on: ubuntu-latest
     needs: build
+    env:
+      AWS_DEFAULT_REGION: ap-south-1
+      AWS_ACCESS_KEY_ID: testing
+      AWS_SECRET_ACCESS_KEY: testing
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
