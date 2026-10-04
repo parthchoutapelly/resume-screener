@@ -14,7 +14,7 @@ An enterprise-oriented suite of four serverless cloud architectures deployed in 
 
 - [1. Portfolio Overview](#1-portfolio-overview)
 - [2. The Four Portfolio Projects](#2-the-four-portfolio-projects)
-  - [Project 1: AWS Cloud Security Analyzer / CloudGuard ULTRA](#project-1-aws-cloud-security-analyzer--cloudguard-ultra)
+  - [Project 1: Employee Document Vault With Role Based Access](#project-1-aws-cloud-security-analyzer--cloudguard-ultra)
   - [Project 2: VEYRA / Smart Employee Onboarding & Identity Service](#project-2-veyra--smart-employee-onboarding--identity-service)
   - [Project 3: Smart Leave & Absence Management Engine](#project-3-smart-leave--absence-management-engine)
   - [Project 4: AI-Powered Resume Screener Pipeline](#project-4-ai-powered-resume-screener-pipeline)
@@ -48,14 +48,14 @@ This portfolio synthesizes four production-style cloud engineering projects desi
 
 | Project | Primary Stack Name | Architecture Pattern | Key AWS Services | Key Engineering Outcome |
 |---|---|---|---|---|
-| **Project 1: Cloud Security Analyzer / CloudGuard ULTRA** | `employee-document-vault-dev` | REST Microservices + Secure Storage | API Gateway, Lambda, S3, DynamoDB, KMS CMK, X-Ray | Dedicated customer-managed KMS key encryption, strict `/documents/*` presigned URL scoping, immutable audit logging. |
+| **Project 1: Employee Document Vault With Role Based Access** | `employee-document-vault-dev` | REST Microservices + Secure Storage | API Gateway, Lambda, S3, DynamoDB, KMS CMK, X-Ray | Dedicated customer-managed KMS key encryption, strict `/documents/*` presigned URL scoping, immutable audit logging. |
 | **Project 2: VEYRA** | `onboarding-service-dev` | Workflow Orchestration + Identity | API Gateway, Step Functions, Lambda, Cognito, DynamoDB, SES, SNS | Multi-stage onboarding state machine, identity provisioning, 3,000-request Artillery load-tested API. |
 | **Project 3: Smart Leave** | `smart-leave-management-dev` | High-Efficiency HTTP API + Approval | HTTP API v2, Step Functions, Lambda, Secrets Manager, DynamoDB, SES | 71% ingress cost reduction via HTTP APIs, cryptographic token signing for manager email approvals, atomic balance ledgers. |
 | **Project 4: Resume Screener** | `resume-screener-dev` | Asynchronous Event-Driven Pipeline | CloudFront OAC, REST API, SQS, Container Lambdas, DynamoDB, SES | Containerized Tesseract OCR & spaCy NLP parsing, explainable scoring, zero-credential GitHub Actions OIDC CI/CD. |
 
 ---
 
-### Project 1: AWS Cloud Security Analyzer / CloudGuard ULTRA
+### Project 1: Employee Document Vault With Role Based Access
 *Context: Deployed within the Employee Document Workspace / DocVault architecture (`employee-document-vault-dev`).*
 
 - **Purpose**: Provides cryptographically isolated, auditable document storage for sensitive employee records, combining zero-trust presigned access with continuous cloud security inspection.
