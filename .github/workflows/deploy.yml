@@ -133,9 +133,8 @@ jobs:
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
             --s3-bucket aws-sam-cli-managed-default-samclisourcebucket-4sdbhpupwvml \
             --s3-prefix resume-screener-dev \
-            --image-repositories \
-              ExtractionFunction=331262815638.dkr.ecr.ap-south-1.amazonaws.com/resumescreenerdev8b303e78/extractionfunction09642ac4repo \
-              NlpFunction=331262815638.dkr.ecr.ap-south-1.amazonaws.com/resumescreenerdev8b303e78/nlpfunction307c287drepo \
+            --image-repositories ExtractionFunction=331262815638.dkr.ecr.ap-south-1.amazonaws.com/resumescreenerdev8b303e78/extractionfunction09642ac4repo \
+            --image-repositories NlpFunction=331262815638.dkr.ecr.ap-south-1.amazonaws.com/resumescreenerdev8b303e78/nlpfunction307c287drepo \
             --parameter-overrides \
               EnvName=dev \
               SesSenderAddress=parth.choutapelly@gmail.com \
