@@ -131,7 +131,8 @@ jobs:
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-            --resolve-s3 \
+            --s3-bucket aws-sam-cli-managed-default-samclisourcebucket-4sdbhpupwvml \
+            --s3-prefix resume-screener-dev \
             --resolve-image-repos \
             --parameter-overrides \
               EnvName=dev \
