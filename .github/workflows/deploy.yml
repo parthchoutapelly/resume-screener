@@ -51,7 +51,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          pip install -e backend/layers/common_layer/python
 
       - name: Validate Skills & Dictionaries
         run: |
