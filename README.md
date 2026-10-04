@@ -1,1434 +1,357 @@
-# AI-Powered Resume Screener & Talent Acquisition Pipeline
+# AWS Cloud Engineering Internship Portfolio
 
-An AWS-based serverless recruitment platform that automates resume ingestion, document extraction, NLP-based candidate analysis, explainable candidate scoring, recruiter decisions, and candidate export.
+An enterprise-oriented suite of four serverless cloud architectures deployed in **AWS Asia Pacific (Mumbai) `ap-south-1`**, hardened for security least-privilege, cross-project observability, transparent 3-tier cost modeling, automated OIDC CI/CD deployment, empirical load testing, and operational runbook reliability.
 
-The system allows a recruiter to create a job, define its requirements, upload a batch of resumes, and automatically receive processed candidates ranked against the job requirements.
-
----
-
-## Live Application
-
-**Live Website:**  
-https://d1yg427uu45noj.cloudfront.net
-
-**AWS Region:** `ap-south-1`
-
-**Environment:** `dev`
-
-**API Gateway:**  
-https://qdcgssdx9l.execute-api.ap-south-1.amazonaws.com/dev
-
-The application is deployed on AWS. The frontend is delivered through Amazon CloudFront, while the backend uses API Gateway, Lambda, S3, SQS, DynamoDB, Cognito, SNS, SES, and CloudWatch.
+[![CI/CD Pipeline](https://github.com/parthchoutapelly/resume-screener/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/parthchoutapelly/resume-screener/actions/runs/37216166088)
+[![AWS](https://img.shields.io/badge/AWS-Serverless-orange.svg?logo=amazon-aws)](https://aws.amazon.com/)
+[![Python](https://img.shields.io/badge/Python-3.12-blue.svg?logo=python)](https://www.python.org/)
+[![React](https://img.shields.io/badge/Frontend-React_18-61DAFB.svg?logo=react)](https://react.dev/)
+[![Infrastructure](https://img.shields.io/badge/IaC-AWS_SAM_%2F_CloudFormation-red.svg)](https://aws.amazon.com/serverless/sam/)
 
 ---
 
-# 1. Project Overview
+## Table of Contents
 
-Recruiters often need to manually review large numbers of resumes against a single job description. This process is time-consuming and makes it difficult to consistently compare candidates.
-
-This project automates that workflow.
-
-A recruiter can:
-
-1. Create a job requisition.
-2. Define required skills, preferred titles, minimum experience, and screening threshold.
-3. Upload multiple resumes.
-4. Automatically extract resume content.
-5. Process the extracted text using NLP.
-6. Identify candidate information such as name, email, skills, titles, and experience.
-7. Score each candidate against the job requirements.
-8. Review an explainable candidate breakdown.
-9. Shortlist or reject candidates.
-10. Export candidate results as CSV.
-11. Monitor failed processing jobs through an administrative failures view.
-
-The system is designed as a serverless AWS pipeline with asynchronous processing, retries, dead-letter queues, monitoring, authentication, authorization, and failure handling.
+- [1. Portfolio Overview](#1-portfolio-overview)
+- [2. The Four Portfolio Projects](#2-the-four-portfolio-projects)
+  - [Project 1: AWS Cloud Security Analyzer / CloudGuard ULTRA](#project-1-aws-cloud-security-analyzer--cloudguard-ultra)
+  - [Project 2: VEYRA / Smart Employee Onboarding & Identity Service](#project-2-veyra--smart-employee-onboarding--identity-service)
+  - [Project 3: Smart Leave & Absence Management Engine](#project-3-smart-leave--absence-management-engine)
+  - [Project 4: AI-Powered Resume Screener Pipeline](#project-4-ai-powered-resume-screener-pipeline)
+- [3. Architecture & Serverless Design Patterns](#3-architecture--serverless-design-patterns)
+- [4. Security Controls & Hardening](#4-security-controls--hardening)
+- [5. Observability & Telemetry](#5-observability--telemetry)
+- [6. Enterprise CI/CD Automation](#6-enterprise-cicd-automation)
+- [7. Cost Estimation & 3-Tier Scaling Analysis](#7-cost-estimation--3-tier-scaling-analysis)
+- [8. Testing & Load Performance](#8-testing--load-performance)
+- [9. Six Required Internship Deliverables](#9-six-required-internship-deliverables)
+- [10. Repository Structure](#10-repository-structure)
+- [11. Local Development & Deployment](#11-local-development--deployment)
+- [12. Further Documentation & Verification](#12-further-documentation--verification)
 
 ---
 
-# 2. Key Features
+## 1. Portfolio Overview
 
-## Recruiter Features
+This portfolio synthesizes four production-style cloud engineering projects designed and hardened during the AWS Cloud Engineering Internship. Rather than relying on simple toy examples or monolithic patterns, every project implements an event-driven, decoupled serverless architecture adhering to the AWS Well-Architected Framework:
 
-- Create and manage job requisitions
-- Upload job descriptions
-- Upload multiple resumes
-- Support PDF, DOCX, and image-based documents
-- Process native and scanned documents
-- Automatic candidate extraction
-- NLP-based skill and title matching
-- Deterministic experience calculation
-- Explainable candidate scoring
-- Candidate ranking
-- Matched and missing skills
-- Shortlist candidates
-- Reject candidates
-- Edit job requirements and rescore candidates
-- Export candidate results to CSV
-- Processing status tracking
-- Failure status visibility
-
-## Administration
-
-- Cognito-based authentication
-- Recruiter/Admin roles
-- Admin-only failure monitoring
-- Processing failure visibility
-- SQS dead-letter queues
-- CloudWatch alarms
-- SNS notifications
-
-## Reliability
-
-- SQS-based asynchronous processing
-- Retry handling
-- Ingestion DLQ
-- Scoring DLQ
-- Failure persistence
-- Duplicate-event protection
-- Terminal failure states
-- Processing status tracking
-
-## Security
-
-- Amazon Cognito authentication
-- Role/group-based authorization
-- Recruiter job isolation
-- Private S3 buckets
-- API authorization
-- CORS restrictions
-- HTTPS/TLS
-- Security headers
-- Upload validation
-- CSV injection protection
-- XSS-safe rendering
-- PII-conscious logging
-- Least-privilege IAM policies
+- **Security & IAM Least Privilege**: Elimination of wildcard permissions, strict resource ARN scoping, functional S3 prefix isolation, condition-scoped SES sending, and zero static credentials via GitHub Actions OIDC.
+- **Unified Observability**: A cross-project CloudWatch dashboard (`internship-portfolio-overview-dev`) delivering single-pane visibility across critical alarms, API ingress, Lambda compute health, database operations, and dead-letter queues.
+- **Transparent Cost Modeling**: Comprehensive 3-tier scaling financial models (Dev, Team, High Scale) calculated on gross list prices before account-level free tiers, distinguishing active deployed baselines from architectural optimization scenarios.
+- **Automated Delivery**: Enterprise two-tier OIDC deployment pipeline enforcing build compilation, 453 automated tests, and CloudFormation service role execution.
+- **Empirical Validation**: Measured load testing using Artillery Core to stress concurrency ceilings and uncover architectural scaling bottlenecks.
+- **Operational Readiness**: Practical one-page operational runbooks for each project with real CLI health checks, failure diagnostic trees, and safe rollback procedures.
 
 ---
 
-# 3. High-Level Architecture
+## 2. The Four Portfolio Projects
 
-```text
-                         ┌───────────────────────┐
-                         │       Recruiter       │
-                         │     / Administrator   │
-                         └───────────┬───────────┘
-                                     │
-                                     ▼
-                         ┌───────────────────────┐
-                         │   React + Vite Web    │
-                         │      Application      │
-                         └───────────┬───────────┘
-                                     │
-                                     ▼
-                         ┌───────────────────────┐
-                         │     Amazon Cognito    │
-                         │ Authentication / Roles│
-                         └───────────┬───────────┘
-                                     │
-                                     ▼
-                         ┌───────────────────────┐
-                         │     API Gateway       │
-                         └───────────┬───────────┘
-                                     │
-                                     ▼
-                         ┌───────────────────────┐
-                         │   API Lambda Functions│
-                         └───────────┬───────────┘
-                                     │
-                                     ▼
-                         ┌───────────────────────┐
-                         │      DynamoDB         │
-                         │ Jobs / Candidates /   │
-                         │ Config / Failed Jobs  │
-                         └───────────────────────┘
+| Project | Primary Stack Name | Architecture Pattern | Key AWS Services | Key Engineering Outcome |
+|---|---|---|---|---|
+| **Project 1: Cloud Security Analyzer / CloudGuard ULTRA** | `employee-document-vault-dev` | REST Microservices + Secure Storage | API Gateway, Lambda, S3, DynamoDB, KMS CMK, X-Ray | Dedicated customer-managed KMS key encryption, strict `/documents/*` presigned URL scoping, immutable audit logging. |
+| **Project 2: VEYRA** | `onboarding-service-dev` | Workflow Orchestration + Identity | API Gateway, Step Functions, Lambda, Cognito, DynamoDB, SES, SNS | Multi-stage onboarding state machine, identity provisioning, 3,000-request Artillery load-tested API. |
+| **Project 3: Smart Leave** | `smart-leave-management-dev` | High-Efficiency HTTP API + Approval | HTTP API v2, Step Functions, Lambda, Secrets Manager, DynamoDB, SES | 71% ingress cost reduction via HTTP APIs, cryptographic token signing for manager email approvals, atomic balance ledgers. |
+| **Project 4: Resume Screener** | `resume-screener-dev` | Asynchronous Event-Driven Pipeline | CloudFront OAC, REST API, SQS, Container Lambdas, DynamoDB, SES | Containerized Tesseract OCR & spaCy NLP parsing, explainable scoring, zero-credential GitHub Actions OIDC CI/CD. |
 
+---
 
-Resume Upload Pipeline
-────────────────────────────────────────────────────────────
+### Project 1: AWS Cloud Security Analyzer / CloudGuard ULTRA
+*Context: Deployed within the Employee Document Workspace / DocVault architecture (`employee-document-vault-dev`).*
 
-     Resume
-       │
-       ▼
-┌───────────────┐
-│   Amazon S3   │
-│ Upload Bucket │
-└───────┬───────┘
+- **Purpose**: Provides cryptographically isolated, auditable document storage for sensitive employee records, combining zero-trust presigned access with continuous cloud security inspection.
+- **Architecture Highlights**: Amazon API Gateway REST API invokes 7 dedicated Lambda functions (`Upload`, `Download`, `Delete`, `ListFiles`, `UpdateTags`, `Versions`, `Activity`). Documents are stored in Amazon S3 encrypted under a dedicated AWS KMS Customer Managed Key (`alias/docvault-cmk-dev`) with automated key rotation.
+- **Key Security Controls**: Enforces S3 functional prefix isolation (`/documents/{employee_id}/*`), S3 Public Access Block, bucket policy requiring TLS transport (`DenyInsecureTransport`), and immutable change tracking in `AuditLogTable`.
+- **Evidence Reference**: [Project 1 IAM Audit](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/iam-comparison-project1-cloudguard-docvault.md) | [Project 1 Runbook](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/runbook-project1-cloudguard.md)
+
+---
+
+### Project 2: VEYRA / Smart Employee Onboarding & Identity Service
+*Context: Deployed as `onboarding-service-dev`.*
+
+- **Purpose**: Coordinates the multi-step employee onboarding lifecycle across identity creation, document collection, IT asset provisioning, and compliance sign-offs.
+- **Architecture Highlights**: Uses AWS Step Functions (`OnboardingStateMachine`) to orchestrate 13 Lambda microservices, managing state transitions and sending event-driven email notifications via Amazon SES. User identity is managed through an Amazon Cognito User Pool.
+- **Key Security Controls**: Amazon SES email sending is strictly scoped to the verified sender identity ARN. Amazon S3 presigned upload generation enforces tenant-isolated prefixes.
+- **Evidence Reference**: [Project 2 IAM Audit](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/iam-comparison-project2-veyra-onboarding.md) | [Artillery Load Test](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/load-test-report.md) | [Project 2 Runbook](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/runbook-project2-veyra-onboarding.md)
+
+---
+
+### Project 3: Smart Leave & Absence Management Engine
+*Context: Deployed as `smart-leave-management-dev`.*
+
+- **Purpose**: Automates employee leave requests, quota deduction, cryptographically signed manager approval routing, team availability conflict detection, and HR SLA escalations.
+- **Architecture Highlights**: Leverages **Amazon API Gateway HTTP APIs (v2)** to achieve a 71% cost reduction over Regional REST APIs. Coordinates 12 Lambda functions and a Step Functions approval workflow. Uses **AWS Secrets Manager** to store an `ApprovalSecret` that generates tamper-proof HMAC tokens for one-click email approvals.
+- **Key Security Controls**: 13 newly codified least-privilege IAM roles. Secrets Manager access is restricted exclusively to the token processing Lambdas. DynamoDB balance deductions enforce atomic conditional expressions to prevent overdrafts.
+- **Evidence Reference**: [Project 3 IAM Audit](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/iam-comparison-project3-smart-leave.md) | [Project 3 Runbook](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/runbook-project3-smart-leave.md)
+
+---
+
+### Project 4: AI-Powered Resume Screener Pipeline
+*Context: Deployed as `resume-screener-dev`.*
+
+- **Purpose**: Automates candidate resume parsing, OCR text extraction, deterministic experience calculation, explainable NLP skill matching, and recruiter decision management.
+- **Architecture Highlights**:
+  - **CDN & Frontend**: Single Page Application hosted on Amazon S3 and distributed via **Amazon CloudFront** (`https://d1yg427uu45noj.cloudfront.net`) with **Origin Access Control (OAC)**.
+  - **API Ingress**: Amazon API Gateway with dedicated `ApiGatewayCloudWatchRole` and Cognito User Pool authorization.
+  - **Asynchronous Processing**: Decoupled via **Amazon SQS** queues (`IngestionQueue`, `ScoringQueue`) backed by Dead Letter Queues (`IngestionDlq`, `ScoringDlq`).
+  - **High-Performance Compute**: Custom containerized Lambda functions running **Tesseract OCR** and **spaCy NLP** (1536 MB RAM) alongside 12 zip-packaged microservices and a shared `CommonLayer`.
+  - **Data Resilience**: Four DynamoDB tables (`JobsTable`, `CandidatesTable`, `FailedJobsTable`, `ConfigTable`) operating on-demand with **Point-in-Time Recovery (PITR)** and Deletion Protection enabled.
+- **Evidence Reference**: [Project 4 IAM Audit](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/iam-comparison-project4-resume-screener.md) | [CI/CD Demonstration](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/ci-cd-pipeline-demo.md) | [Project 4 Runbook](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/runbook-project4-resume-screener.md)
+
+---
+
+## 3. Architecture & Serverless Design Patterns
+
+The portfolio demonstrates five core serverless design patterns across the AWS ecosystem:
+
+```
+Pattern A: Asynchronous Ingestion & Queued Processing (Resume Screener)
+[CloudFront / S3] ──> [API Gateway] ──> [S3 Upload Bucket] ──> [SQS Ingestion] ──> [OCR Lambda] ──> [NLP Lambda] ──> [DynamoDB] ──> [SQS Scoring] ──> [ScoreMatch Lambda]
+
+Pattern B: State Machine Orchestration (VEYRA & Smart Leave)
+[API Ingress] ──> [Step Functions State Machine] ──> [Worker Lambdas] ──> [DynamoDB / S3 / SES]
+                           │
+                           └──> [Task Token Wait State] ──> (Manager One-Click Action) ──> [Task Completion]
+
+Pattern C: High-Efficiency HTTP API Ingress (Smart Leave)
+[Client] ──> [API Gateway HTTP API v2 ($1/M)] ──> [Lambda Handlers] ──> [Secrets Manager / DynamoDB]
+
+Pattern D: Cryptographic Enclave & KMS Key Isolation (CloudGuard / DocVault)
+[Client] ──> [API Gateway] ──> [Lambda] ──> [S3 Bucket (SSE-KMS Customer Managed Key)] ──> [DynamoDB Audit Ledger]
+
+Pattern E: Two-Tier Least-Privilege CI/CD (GitHub Actions OIDC)
+[GitHub Runner] ──(OIDC)──> [Role 1: deploy] ──(PassRole)──> [CloudFormation] ──(Assumes)──> [Role 2: execution] ──> [Stack Resources]
+```
+
+---
+
+## 4. Security Controls & Hardening
+
+Security hardening is enforced through concrete infrastructure-as-code controls:
+
+1. **Zero Long-Lived Credentials**: CI/CD pipelines use short-lived AWS STS tokens via **GitHub Actions OIDC** (`sts:AssumeRoleWithWebIdentity`). No access keys or secrets are stored in GitHub repository secrets.
+2. **Strict OIDC Subject Constraints**: The trust policy on `resume-screener-github-actions-deploy` enforces exact `StringEquals` matching against the immutable GitHub repository and branch identifier:
+   `repo:parthchoutapelly@143930644/resume-screener@1383681742:ref:refs/heads/main`.
+3. **Two-Tier IAM Separation & Delegated Execution**:
+   - `resume-screener-github-actions-deploy` (Deployment Role): Zero direct application infrastructure permissions (`lambda:*`, `dynamodb:*`, `s3:CreateBucket`). Authorized only to upload deployment artifacts and initiate ChangeSets.
+   - `resume-screener-cloudformation-execution` (Service Execution Role): CloudFormation service-assumed role strictly bound to the application stack ARN (`arn:aws:cloudformation:ap-south-1:331262815638:stack/resume-screener-dev/*`) and the SAM Serverless Transform macro (`arn:aws:cloudformation:ap-south-1:aws:transform/Serverless-2016-10-31`).
+4. **Restricted `iam:PassRole` Boundaries**:
+   - Deployment role can only pass `resume-screener-cloudformation-execution` to `cloudformation.amazonaws.com`.
+   - Execution role can only pass the 15 runtime roles to `lambda.amazonaws.com` and `apigateway.amazonaws.com`.
+5. **Functional S3 Prefix Isolation**:
+   - Upload functions: Restricted to `/jd-uploads/*` and `/resume-uploads/*`.
+   - Resume download URLs: Restricted to `/resume-uploads/*`.
+   - Shortlist CSV exports: Restricted to `/exports/*`.
+6. **Condition-Scoped Email Sending**:
+   - In Amazon SES sandbox, `ses:SendEmail` is constrained by IAM Condition `StringEquals: "ses:FromAddress": !Ref SesSenderAddress` to prevent unauthorized sender spoofing.
+7. **CloudFront Origin Access Control (OAC)**: S3 web hosting buckets deny public access and accept requests exclusively from the designated CloudFront distribution ARN via HTTPS (`DenyInsecureTransport`).
+8. **IAM Access Analyzer Verification**: All IAM policies and resource policies validate with **0 ERROR findings** in AWS IAM Access Analyzer.
+
+---
+
+## 5. Observability & Telemetry
+
+Cross-project operational visibility is centralized in the CloudWatch dashboard:
+
+### Dashboard: `internship-portfolio-overview-dev` (`ap-south-1`)
+
+The dashboard provides 13 dedicated widgets structured across four operational tiers:
+1. **Critical Portfolio Alarms Status**: Consolidated view of all active metric alarms across the four projects.
+2. **Fleetwide Regional Lambda Activity**: Regional execution counts, error rates, and duration tracking across all serverless compute.
+3. **Project-Specific Workload Tracking**:
+   - *Project 1*: DocVault API Gateway call volume, 4xx/5xx errors, latency, and DynamoDB read/write units.
+   - *Project 2*: VEYRA Step Functions execution rates (ExecutionsStarted, ExecutionsSucceeded, ExecutionsFailed) and API Gateway latency.
+   - *Project 3*: Smart Leave HTTP API request volume, status codes, and manager approval SLA timings.
+   - *Project 4*: Resume Screener recruiter API latency, SQS ingestion queue depth, and scoring queue backlogs.
+4. **Security & Reliability**:
+   - 4xx client and authorization rejections (Cognito/API Gateway auth failures).
+   - Dead Letter Queue messages received (`rs-ingestion-dlq-dev`, `rs-scoring-dlq-dev`) and Lambda throttling events.
+
+*Evidence Artifacts*: [Full Dashboard (PNG)](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/01_cloudwatch_portfolio_dashboard.png) | [Top Section (PNG)](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/01a_portfolio_overview_top.png) | [Bottom Section (PNG)](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/01b_portfolio_overview_bottom.png)
+
+---
+
+## 6. Enterprise CI/CD Automation
+
+Continuous Integration and Continuous Deployment are implemented using GitHub Actions and AWS SAM:
+
+### Pipeline Architecture (`.github/workflows/deploy.yml`)
+
+```
+GitHub Commit (main)
         │
-        ▼
-┌───────────────────┐
-│  SQS Ingestion    │
-│      Queue        │
-└─────────┬─────────┘
-          │
-          ▼
-┌────────────────────────┐
-│ Document Extraction    │
-│       Lambda           │
-│                        │
-│ PDF / DOCX / Image     │
-│ OCR / Text Extraction  │
-└──────────┬─────────────┘
-           │
-           │ Synchronous Lambda Invoke
-           ▼
-┌────────────────────────┐
-│      NLP Lambda        │
-│                        │
-│ spaCy NER              │
-│ Skill Matching         │
-│ Title Matching         │
-│ Experience Detection   │
-└──────────┬─────────────┘
-           │
-           ▼
-┌────────────────────────┐
-│       DynamoDB         │
-│ Candidate Information  │
-└──────────┬─────────────┘
-           │
-           ▼
-┌────────────────────────┐
-│    SQS Scoring Queue   │
-└──────────┬─────────────┘
-           │
-           ▼
-┌────────────────────────┐
-│   ScoreMatch Lambda    │
-│                        │
-│ Skills      50%        │
-│ Title       30%        │
-│ Experience  20%        │
-└──────────┬─────────────┘
-           │
-           ▼
-┌────────────────────────┐
-│       DynamoDB         │
-│ Scores / Decisions     │
-└────────────────────────┘
-
-
-Failure / Operations
-────────────────────────────────────────────────────────────
-
-SQS Ingestion Queue ───────► Ingestion DLQ
-                                      │
-                                      ▼
-                              DLQ Handler Lambda
-
-SQS Scoring Queue ─────────► Scoring DLQ
-                                      │
-                                      ▼
-                              DLQ Handler Lambda
-
-Lambda / SQS / DLQ
+        ├──> [1. BUILD Stage]
+        │       ├── Container image build (ExtractionFunction, NlpFunction)
+        │       └── Zip artifact packaging (12 Lambdas + CommonLayer)
         │
-        ▼
-   CloudWatch
+        ├──> [2. TEST Stage]
+        │       ├── Dictionary & skill taxonomy validation
+        │       ├── 282 Unit tests (pytest)
+        │       ├── 157 Component tests (OCR & spaCy)
+        │       └── 14 Frontend tests (Vitest)
         │
-        ▼
-       SNS
+        ├──> [3. DEPLOY Stage]
+        │       ├── OIDC authentication to resume-screener-github-actions-deploy
+        │       ├── AWS account ID safety check (assert 331262815638)
+        │       ├── S3 artifact upload (aws-sam-cli-managed-default-samclisourcebucket-*)
+        │       ├── ECR container image push (explicit repositories)
+        │       ├── CloudFormation ChangeSet creation (passing execution role)
+        │       └── CloudFormation deployment execution
         │
-        ▼
-      Alerts
+        └──> [4. VERIFY Stage]
+                ├── Assert StackStatus == UPDATE_COMPLETE
+                ├── Assert RoleARN == arn:aws:iam::...:role/resume-screener-cloudformation-execution
+                └── Assert CloudFront frontend availability (HTTP 200)
 ```
 
----
-
-# 4. AWS Services Used
-
-| Service | Purpose |
-|---|---|
-| Amazon S3 | Resume and job-description storage |
-| Amazon CloudFront | Frontend delivery |
-| Amazon Cognito | Authentication and role/group management |
-| Amazon API Gateway | REST API |
-| AWS Lambda | Extraction, NLP, scoring, API and operational functions |
-| Amazon SQS | Asynchronous ingestion and scoring queues |
-| Amazon SQS DLQ | Failed message isolation |
-| Amazon DynamoDB | Jobs, candidates, configuration and failure records |
-| Amazon SNS | Operational notifications |
-| Amazon SES | Candidate/recruiter email notifications |
-| Amazon CloudWatch | Logs, metrics and alarms |
-| Amazon ECR | Lambda container images |
-| AWS SAM | Infrastructure-as-code and deployment |
-| AWS IAM | Least-privilege permissions |
+### Verified Successful Pipeline Run
+- **Workflow Run**: **[37216166088](https://github.com/parthchoutapelly/resume-screener/actions/runs/37216166088)**
+- **Commit**: `8a006f1483104c1885634b4c409dcf1ce60158bb`
+- **Results**: `BUILD` = **SUCCESS** (2m 15s) | `TEST` = **SUCCESS** (1m 28s) | `DEPLOY` = **SUCCESS** (4m 05s) | `VERIFY` = **SUCCESS** (10s)
+- **Live Status**: CloudFormation stack `resume-screener-dev` in **`UPDATE_COMPLETE`**, attached role verified, CloudFront frontend returning **`HTTP 200`**.
+- **Audit History**: [Complete 10-Attempt Pipeline Hardening Evidence](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/ci-cd-pipeline-demo.md).
 
 ---
 
-# 5. Document Processing
+## 7. Cost Estimation & 3-Tier Scaling Analysis
 
-The project uses genuine document processing rather than treating resume text as pre-extracted fixture data.
+A comprehensive 3-tier financial model was constructed to evaluate monthly AWS expenditures in **`ap-south-1`**:
+- **Primary Model Workbook**: [`docs/evidence/cost-estimation-3-tier-all-projects.xlsx`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/cost-estimation-3-tier-all-projects.xlsx)
+- **Supporting Technical Report**: [`docs/evidence/cost-estimation-3-tier-all-projects.md`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/cost-estimation-3-tier-all-projects.md)
 
-## Supported Inputs
+### Monthly Cost Summary (Gross List-Price Basis, ap-south-1)
 
-- Native PDF
-- Scanned PDF
-- Mixed PDF
-- DOCX
-- PNG/image documents
+| Project | Stack Name | Tier 1 (Dev / Low) | Tier 2 (Moderate / Team) | Tier 3 (High Scale) | Key Cost Driver |
+|---|---|---:|---:|---:|---|
+| **Project 1: DocVault** | `employee-document-vault-dev` | $2.01 | $4.74 | $43.62 | Fixed KMS CMK ($1.00); S3 storage & logs at scale |
+| **Project 2: VEYRA** | `onboarding-service-dev` | $1.87 | **$99.63** | **$2,315.90** | Cognito Essentials MAUs ($0.015/MAU after 10k free) |
+| **Project 3: Smart Leave** | `smart-leave-management-dev` | **$1.35** | **$6.25** | **$67.12** | Lowest API cost ($1.00/M via HTTP API); Secrets Manager ($0.40) |
+| **Project 4: Resume Screener** | `resume-screener-dev` | $1.73 | $9.93 | $95.36 | Containerized Lambda compute (1536MB OCR/NLP) & S3 |
+| **Portfolio Total (Current Deployed Baseline — Cognito Essentials)** | *All 4 Projects* | **$6.96** | **$120.55** | **$2,521.99** | *Reflects active deployed configuration across all projects* |
 
-## Extraction Technologies
-
-The extraction pipeline uses open-source document-processing components:
-
-- `pypdf`
-- `python-docx`
-- `PyMuPDF`
-- Tesseract OCR
-
-The extraction Lambda is deployed as a container image because the required native/document-processing dependencies are too large for a conventional Lambda ZIP/layer deployment.
-
-The extraction stage produces structured output containing the extracted text and extraction metadata.
+### Cost Sensitivity & Optimization Scenario (Cognito Lite)
+- **Current Deployed Configuration**: Project 2 currently runs **Cognito Essentials** (the default when `UserPoolTier` is unspecified).
+- **Architectural Optimization (Cognito Lite)**: Configuring `UserPoolTier: LITE` ($0.0055/MAU after 50,000 free) reduces Project 2 to **$24.63/mo** (Tier 2) and **$765.90/mo** (Tier 3), bringing the **Portfolio Total to $45.55/month (Tier 2)** and **$971.99/month (Tier 3)** — saving over **$1,550/month** at enterprise scale.
+- **Pure Infrastructure Spend**: Excluding end-user identity licensing, the four projects consume only **$45.55/mo** at Tier 2 and **$421.99/mo** at Tier 3 in pure serverless infrastructure.
 
 ---
 
-# 6. NLP Processing
+## 8. Testing & Load Performance
 
-The NLP stage uses spaCy and deterministic matching logic.
+### Quality Gates (453 Automated Tests)
+- **Unit Tests (`pytest`)**: **282 tests passing** covering schemas, extraction algorithms, parsing utilities, and scoring models.
+- **Component Tests (`pytest`)**: **157 tests passing** validating live Tesseract OCR execution, spaCy NER tokenization, SQS message packaging, and DynamoDB transactions.
+- **Frontend Tests (`vitest`)**: **14 tests passing** verifying React UI views, candidate list rendering, and recruiter review workflows.
+- **Data Validation**: Automated schema validation against dictionary taxonomy fixtures.
 
-The pipeline extracts and identifies:
-
-- Candidate name
-- Email address
-- Skills
-- Previous job titles
-- Experience
-- Relevant entities
-
-## NLP Techniques
-
-### Named Entity Recognition
-
-spaCy NER is used where appropriate for entity extraction.
-
-### Skill Matching
-
-A hybrid approach is used for skills:
-
-- Dictionary-based matching
-- Phrase matching
-- Normalized skill names
-- Matching against required job skills
-
-### Title Matching
-
-Candidate job titles are compared with job-required titles.
-
-The system also supports related title families so that semantically related titles can contribute to the title score.
-
-### Experience
-
-Experience is calculated using deterministic rules based on detected employment/date information.
-
-The experience calculation is intentionally explainable rather than relying on an opaque model.
+### Empirical Load Testing (Artillery Core)
+- **Measured Target**: Executed against Project 2 (`onboarding-service-dev`) REST API Gateway (`https://5goe29bglh.execute-api.ap-south-1.amazonaws.com/dev`).
+- **Load Profile**: Un-ramped step arrival of **50 requests/second** across 60 seconds (total **3,000 requests** executed, 3,000 VUs completed).
+- **Measured Response Latencies (Artillery)**:
+  - **Median (p50)**: **47.0 ms**
+  - **p95**: **73.0 ms**
+  - **p99**: **111.1 ms**
+  - **Minimum**: **36.2 ms**
+- **HTTP Status Distribution**:
+  - **HTTP 200 OK**: **2,947 requests (98.23%)**
+  - **HTTP 4xx**: **0 requests (0.00%)**
+  - **HTTP 5xx**: **53 requests (1.77%)**
+- **Root Cause & Concurrency Governance**:
+  - All 53 errors occurred strictly within the first **8.8 seconds** of traffic injection.
+  - Correlating CloudWatch metrics revealed application `Errors: 0` across all functions, while `Throttles` accounted for exactly 53 dropped invocations.
+  - Root cause was proven to be the AWS account regional concurrency limit of **10 concurrent executions** (`AccountLimit.ConcurrentExecutions = 10`) under a 50 req/sec step arrival.
+  - Following container warm-up, the system achieved a **100% success rate across 2,568 consecutive requests** for the remainder of the test.
+- *Detailed Evidence*: [Deliverable 5 Load Test Report](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/load-test-report.md).
 
 ---
 
-# 7. Candidate Scoring
+## 9. Six Required Internship Deliverables
 
-The project uses scoring version `v1`.
+All six deliverables have been completed, audited, and indexed in [`docs/evidence/README.md`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/README.md):
 
-The overall candidate score is calculated from three components:
+| Deliverable | Key Artifact File | Description & Demonstrated Competency | Status |
+|---|---|---|---|
+| **1. CloudWatch Dashboard** | [`01_cloudwatch_portfolio_dashboard.png`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/01_cloudwatch_portfolio_dashboard.png) | Unified operational dashboard (`internship-portfolio-overview-dev`) covering all 4 projects across alarms, compute, APIs, and databases. | **COMPLETE** |
+| **2. IAM Comparison** | [`iam-comparison-project4-resume-screener.md`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/iam-comparison-project4-resume-screener.md) | Evidence-based before/after policy audits for each project (4 total), documenting least-privilege scoping and zero wildcards. | **COMPLETE** |
+| **3. Cost Estimation** | [`cost-estimation-3-tier-all-projects.xlsx`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/cost-estimation-3-tier-all-projects.xlsx) | 7-sheet Excel workbook and report analyzing monthly cloud spend across 3 scaling tiers in `ap-south-1`. | **COMPLETE** |
+| **4. CI/CD Demonstration** | [`ci-cd-pipeline-demo.md`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/ci-cd-pipeline-demo.md) | GitHub Actions OIDC pipeline (Run `37216166088`) executing Build $\to$ Test $\to$ Deploy $\to$ Verify end-to-end. | **COMPLETE** |
+| **5. Load Test Report** | [`load-test-report.md`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/load-test-report.md) | Measured Artillery load test report (3,000 requests at 50 req/s, p50 = 47ms, p95 = 73ms, concurrency analysis). | **COMPLETE** |
+| **6. Operations Runbooks** | [`runbook-project4-resume-screener.md`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/runbook-project4-resume-screener.md) | Practical one-page operational runbooks for each project (4 total) with CLI health checks, diagnostics, and recovery trees. | **COMPLETE** |
+
+---
+
+## 10. Repository Structure
 
 ```text
-Overall Score =
-    Skills Score      × 50%
-  + Title Score       × 30%
-  + Experience Score  × 20%
-```
-
-## Skills — 50%
-
-Measures how many of the required job skills are present in the candidate profile.
-
-## Title — 30%
-
-Measures relevance between the candidate's previous titles and the titles specified by the recruiter.
-
-Related title families are also considered.
-
-## Experience — 20%
-
-Compares the candidate's calculated experience with the minimum experience requirement.
-
----
-
-# 8. Explainability
-
-The system does not only provide a final percentage.
-
-For every scored candidate, the recruiter can inspect:
-
-- Overall score
-- Skills score
-- Title score
-- Experience score
-- Matched skills
-- Missing skills
-- Extracted experience
-- Titles held
-- Processing status
-- Recruiter decision
-
-This allows the recruiter to understand why a candidate received a particular score.
-
-The score is intended to support recruiter decision-making rather than replace the recruiter.
-
----
-
-# 9. Backend Data Model
-
-The application uses DynamoDB for its core application data.
-
-## Jobs
-
-Stores:
-
-- Job ID
-- Recruiter information
-- Job title
-- Job description
-- Required skills
-- Required titles
-- Minimum experience
-- Shortlist threshold
-- Job status
-- Processing state
-
-## Candidates
-
-Stores:
-
-- Candidate ID
-- Job ID
-- Resume information
-- Candidate name
-- Email
-- Extracted skills
-- Titles
-- Experience
-- Processing status
-- Scoring status
-- Overall score
-- Skill score
-- Title score
-- Experience score
-- Matched skills
-- Missing skills
-- Recruiter decision
-- Notification status
-- Scoring version
-
-## Failed Jobs
-
-Stores operational failure information, including:
-
-- Failure type
-- Processing stage
-- Error state
-- Retry/exhaustion information
-- Failure metadata
-
-## Config
-
-Stores configurable application/NLP settings.
-
----
-
-# 10. API
-
-The recruiter application communicates with the backend through Amazon API Gateway.
-
-Important API operations include:
-
-```text
-POST   /jobs
-GET    /jobs
-GET    /jobs/{job_id}
-PATCH  /jobs/{job_id}
-GET    /jobs/{job_id}/candidates
-POST   /jobs/{job_id}/candidates/{candidate_id}/decision
-GET    /jobs/{job_id}/export
-GET    /failed-jobs
-```
-
-Additional upload and resume-related endpoints support presigned S3 uploads and candidate document access.
-
-Authentication is handled using Amazon Cognito tokens.
-
----
-
-# 11. Frontend
-
-The frontend is built using:
-
-- React
-- Vite
-- JavaScript/TypeScript components
-- Amazon Cognito authentication
-- REST API integration
-
-The UI is designed as a recruiter operations console rather than a generic dashboard.
-
-Major screens include:
-
-- Login
-- Jobs pipeline
-- Create job
-- Job details
-- Candidate list
-- Candidate details
-- Requirements editing
-- Resume upload
-- Decisions
-- CSV export
-- Admin failures view
-
-The frontend is deployed to a private S3 web bucket and delivered through CloudFront.
-
----
-
-# 12. Authentication & Authorization
-
-Amazon Cognito provides authentication.
-
-The application supports role-based access through Cognito groups:
-
-```text
-Recruiter
-Admin
-```
-
-Recruiters can access their permitted recruitment workflows.
-
-Administrative operations such as the failed-jobs view are restricted to the Admin role.
-
-Cross-recruiter access to another recruiter's job resources is rejected.
-
----
-
-# 13. Reliability & Failure Handling
-
-The system was designed to handle processing failures without losing messages silently.
-
-The ingestion and scoring pipelines use:
-
-```text
-SQS
-  │
-  ├── Retry
-  │
-  ├── Retry
-  │
-  ├── Retry
-  │
-  └── DLQ
-```
-
-The DLQ handler processes exhausted failures and makes operational failures visible to administrators.
-
-CloudWatch alarms are configured for important failure conditions.
-
-Tested failure scenarios include:
-
-- Unsupported document format
-- Corrupt PDF
-- Encrypted PDF
-- Blank scanned document
-- Too many pages
-- Missing upload
-- Failed job description
-- Job description without required skills
-- Transient ingestion failure
-- Scoring failure
-- Duplicate events
-- Decision on an unscored candidate
-- Candidate without an email address
-
----
-
-# 14. Security
-
-Security validation covered authentication, authorization, storage, API, browser, logging and IAM behavior.
-
-The security test suite covered:
-
-- Unauthenticated API access
-- Groupless authenticated users
-- Cross-recruiter isolation
-- Admin-only routes
-- CORS behavior
-- Private S3 buckets
-- TLS-only access
-- Upload size restrictions
-- CSV injection
-- XSS payload handling
-- PII exposure in logs
-- IAM policy validation
-- Removal of managed-AI service references
-- Cognito self-signup restrictions
-- Security headers
-
-S3 buckets are configured as private resources and the frontend is delivered through CloudFront rather than public S3 website hosting.
-
----
-
-# 15. Testing
-
-The project includes unit, component, integration, security, failure-path, NLP evaluation and frontend testing.
-
-## Automated Test Results
-
-| Test Area | Result |
-|---|---:|
-| Python Unit Tests | 246 / 246 |
-| `rs_common` Coverage | 94% |
-| Component Tests | 143 / 143 |
-| Frontend Tests | 14 / 14 |
-| Integration Tests | 31 / 31 |
-| Security Checks | S1–S15 verified |
-| Failure Matrix | F1–F13 verified |
-| Accessibility | 0 Critical / 0 Serious |
-| Skill Precision | 0.910 |
-| Skill Recall | 1.000 |
-| Name Accuracy | 10 / 10 |
-| Experience Accuracy | 9 / 9 |
-| Title Hit Rate | 10 / 10 |
-
-The integration suite validates the complete workflow from authenticated job creation and resume upload through processing, scoring, recruiter decisions, notification behavior and CSV export.
-
----
-
-# 16. NLP Evaluation
-
-The NLP evaluation uses a separate truth dataset rather than evaluating the system only against its own output.
-
-The evaluation measures:
-
-- Skill precision
-- Skill recall
-- Name accuracy
-- Experience accuracy
-- Title hit rate
-
-Final evaluation:
-
-```text
-Skill Precision:      0.910
-Skill Recall:         1.000
-Name Accuracy:        10/10
-Experience Accuracy:  9/9
-Title Hit Rate:       10/10
-```
-
-The evaluation process also records causes for extraction misses, such as:
-
-- Dictionary gaps
-- OCR noise
-- NER misses
-- Section detection issues
-
----
-
-# 17. Accessibility
-
-The frontend was tested using automated accessibility checks and keyboard navigation.
-
-The final accessibility verification reported:
-
-```text
-Critical issues: 0
-Serious issues:  0
-Moderate issues: 5
-Minor issues:    0
-```
-
-Keyboard navigation was also verified across the primary recruiter workflows.
-
----
-
-# 18. Integration Test
-
-The full integration test uses a mixed document set containing:
-
-- Native PDFs
-- Scanned PDF
-- Mixed PDF
-- DOCX
-- PNG
-- Unsupported renamed document
-
-The test verifies that:
-
-```text
-6 candidates → successfully scored
-1 candidate  → correctly rejected as unsupported
-```
-
-It also validates:
-
-- Candidate sub-scores
-- Matched skills
-- `scoring_version = v1`
-- Worked scoring example
-- Recruiter decisions
-- Email notification behavior
-- CSV export
-- Failure records
-
----
-
-# 19. Demo Workflow
-
-The recommended live demonstration is:
-
-```text
-1. Login
-      ↓
-2. Create a job
-      ↓
-3. Add job requirements
-      ↓
-4. Upload resumes
-      ↓
-5. Show processing
-      ↓
-6. Show candidate scores
-      ↓
-7. Open candidate details
-      ↓
-8. Explain matched/missing skills
-      ↓
-9. Shortlist / Reject
-      ↓
-10. Export CSV
-      ↓
-11. Show Admin / Failures
-```
-
-A cybersecurity recruitment dataset is available for the primary demonstration.
-
-A second Cloud/DevOps dataset is available as an alternate mentor/demo dataset.
-
----
-
-# 20. Example Demo Job
-
-## Cybersecurity Engineer
-
-### Minimum Experience
-
-`3 years`
-
-### Screening Threshold
-
-`50%`
-
-### Required Skills
-
-```text
-SIEM
-SOC
-Splunk
-AWS
-IAM
-Python
-Incident Response
-Threat Detection
-Vulnerability Management
-Linux
-EDR
-Firewall
-```
-
-### Relevant Titles
-
-```text
-Cybersecurity Engineer
-Security Engineer
-SOC Analyst
-Information Security Engineer
-Cybersecurity Analyst
-```
-
-The demo dataset contains four synthetic resumes designed to produce different levels of skill, title and experience matching.
-
----
-
-# 21. Project Structure
-
-```text
-resume-screener/
-│
-├── backend/
-│   ├── functions/
-│   │   ├── extraction/
-│   │   ├── nlp/
-│   │   ├── scoring/
-│   │   ├── api/
-│   │   └── dlq/
-│   │
-│   ├── layers/
-│   └── common/
-│
-├── frontend/
-│   ├── src/
-│   ├── public/
-│   ├── package.json
-│   └── vite.config.*
-│
-├── tests/
-│   ├── unit/
-│   ├── component/
-│   ├── integration/
-│   └── fixtures/
-│
-├── scripts/
-│   ├── evaluate.py
-│   ├── validate_data.py
-│   └── capture_sample_output.py
-│
-├── docs/
-│   ├── Memory.md
-│   ├── PRD.md
-│   ├── Rules.md
-│   ├── Architecture.md
-│   ├── 01-infrastructure-setup.md
-│   ├── 02-ingestion-pipeline.md
-│   ├── 03-scoring-and-api.md
-│   ├── 04-frontend-dashboard.md
-│   ├── 05-integration-testing-and-delivery.md
-│   ├── deliverables.md
-│   ├── evaluation.md
-│   ├── demo.md
-│   ├── evidence/
-│   └── sample-nlp-output/
-│
-├── infra/
-│   └── README.md
-│
-├── template.yaml
-├── Makefile
-├── requirements.txt
-└── README.md
+.
+├── backend/                  # Lambda function handlers, NLP extractors, schemas, and layers
+│   ├── functions/            # 14 serverless function implementations
+│   └── layers/               # Shared common dependencies and utilities
+├── frontend/                 # React 18 / Vite recruiter web dashboard application
+├── infra/                    # Architecture documentation and infrastructure specifications
+├── docs/                     # Engineering design specifications and deliverables
+│   └── evidence/             # The Six Portfolio Deliverables and audit artifacts
+├── tests/                    # Unit, component, and frontend test suites
+│   ├── unit/                 # 282 unit tests
+│   ├── component/            # 157 component tests
+│   └── fixtures/             # Evaluation datasets, sample resumes, and job descriptions
+├── scripts/                  # Operational, testing, and evaluation utility scripts
+├── template.yaml             # Primary AWS SAM / CloudFormation infrastructure specification
+├── samconfig.toml            # SAM CLI deployment parameters and environment configuration
+├── Makefile                  # Local automation targets for linting, testing, and building
+└── .github/                  # GitHub Actions CI/CD workflows
+    └── workflows/
+        └── deploy.yml        # Enterprise two-tier OIDC deployment pipeline
 ```
 
 ---
 
-# 22. Development Environment
+## 11. Local Development & Deployment
 
-## Requirements
+### Prerequisites
+- Python 3.12 & virtual environment (`.venv`)
+- Node.js v20+ & npm
+- Docker Desktop or Colima (for container Lambda compilation)
+- AWS CLI v2 configured for `ap-south-1`
+- AWS SAM CLI v1.120+
 
-Recommended prerequisites:
-
-- Python 3.12
-- Node.js / npm
-- AWS CLI
-- AWS SAM CLI
-- Docker
-- Git
-- AWS credentials with the required deployment permissions
-
-Verify:
-
+### Local Testing & Quality Gates
 ```bash
-python3 --version
-node --version
-npm --version
-aws --version
-sam --version
-docker --version
-```
+# 1. Activate virtual environment
+source .venv/bin/activate
 
----
+# 2. Run unit tests
+pytest tests/unit/ -v
 
-# 23. Local Setup
+# 3. Run component tests (requires Tesseract and spaCy)
+pytest tests/component/ -v
 
-Clone the repository:
+# 4. Run frontend tests
+cd frontend && npm test -- --run && cd ..
 
-```bash
-git clone https://github.com/parthchoutapelly/Resume-Screener.git
-cd Resume-Screener
-```
-
-Create the Python environment:
-
-```bash
-make venv
-```
-
-Run linting:
-
-```bash
-make lint
-```
-
-Run tests:
-
-```bash
-make test
-```
-
----
-
-# 24. AWS Build
-
-The project uses AWS SAM for infrastructure and deployment.
-
-Build the application:
-
-```bash
-make build ENV=dev
-```
-
-Equivalent SAM command:
-
-```bash
+# 5. Build SAM application with container compilation
 sam build --use-container
 ```
 
-The `--use-container` option is important because the project contains Lambda dependencies that require a compatible Linux build environment.
-
----
-
-# 25. AWS Deployment
-
-Deploy the development environment:
-
+### Production Deployment
+Production deployments are fully automated through GitHub Actions. Pushing to `main` executes the hardened two-tier OIDC pipeline:
 ```bash
-make deploy ENV=dev
+git push origin main
 ```
-
-or:
-
+For manual break-glass deployment using authenticated AWS credentials:
 ```bash
-sam deploy --config-env dev
-```
-
-The primary deployment stack is:
-
-```text
-resume-screener-dev
-```
-
-AWS Region:
-
-```text
-ap-south-1
+sam deploy --config-file samconfig.toml --role-arn arn:aws:iam::331262815638:role/resume-screener-cloudformation-execution
 ```
 
 ---
 
-# 26. Configuration
-
-The project uses AWS SAM parameters and environment configuration for deployment-specific settings.
-
-The development environment contains resources such as:
-
-- S3 buckets
-- DynamoDB tables
-- SQS queues
-- SQS DLQs
-- Lambda functions
-- Cognito
-- API Gateway
-- SNS
-- SES
-- CloudWatch alarms
-- CloudFront
-- ECR
-
-Do not commit:
-
-- AWS access keys
-- Cognito passwords
-- Secrets
-- Environment-specific credentials
-- Personal credentials
-
----
-
-# 27. NLP Configuration
-
-The project includes a configuration/seed mechanism for NLP settings.
-
-Seed the development configuration:
-
-```bash
-make seed ENV=dev
-```
-
-This initializes the required NLP engine configuration in DynamoDB.
-
----
-
-# 28. Useful Development Commands
-
-### Lint
-
-```bash
-make lint
-```
-
-### Tests
-
-```bash
-make test
-```
-
-### Build
-
-```bash
-make build ENV=dev
-```
-
-### Deploy
-
-```bash
-make deploy ENV=dev
-```
-
-### Seed configuration
-
-```bash
-make seed ENV=dev
-```
-
-### Validate data
-
-```bash
-python scripts/validate_data.py
-```
-
-### NLP evaluation
-
-```bash
-python scripts/evaluate.py --env dev
-```
-
-### Integration test
-
-```bash
-python tests/integration/run.py --env dev
-```
-
----
-
-# 29. Deployment Information
-
-Current development deployment:
-
-```text
-Stack:
-resume-screener-dev
-
-Region:
-ap-south-1
-
-CloudFront Distribution:
-E19GPCBPKSYGJG
-
-CloudFront Domain:
-d1yg427uu45noj.cloudfront.net
-
-API Gateway:
-rs-api-dev
-
-API ID:
-qdcgssdx9l
-
-API Stage:
-dev
-```
-
-Frontend web bucket:
-
-```text
-resume-screener-web-dev-331262815638
-```
-
-The frontend bucket is private and is accessed through CloudFront.
-
----
-
-# 30. AWS Account / Free-Tier Design Considerations
-
-The project was developed with AWS account/resource constraints in mind.
-
-During development, managed AI services such as Amazon Textract and Amazon Comprehend were not relied upon because of account/service availability constraints.
-
-Instead, the project uses open-source document extraction and NLP components:
-
-```text
-Document Processing:
-- pypdf
-- python-docx
-- PyMuPDF
-- Tesseract OCR
-
-NLP:
-- spaCy
-```
-
-This allows the system to demonstrate genuine document extraction and NLP while remaining deployable under the project's AWS constraints.
-
-The architecture maintains a provider boundary so that managed AWS AI services can be introduced later if the AWS account is upgraded or those services become available.
-
----
-
-# 31. Known Limitation
-
-The Phase 5 load-test harness supports a 50-resume workload consisting of:
-
-```text
-35 native PDFs
-10 scanned PDFs
-5 DOCX files
-```
-
-The 50-resume live burst was not executed because of AWS regional unreserved-concurrency constraints.
-
-The load harness itself was validated, but the project does not claim a successful live 50-resume burst.
-
-This limitation was documented rather than changing the production architecture solely to satisfy the test.
-
-All other Phase 5 integration, failure, security, NLP and accessibility gates were completed.
-
----
-
-# 32. Future Enhancements
-
-The project identifies three primary future enhancements.
-
-## F1 — Custom NER
-
-Train or fine-tune a domain-specific NER model for:
-
-- Skills
-- Organizations
-- Job titles
-- Certifications
-- Employment dates
-
-This would improve extraction accuracy for resumes with unusual formatting.
-
-## F2 — Cover Letter Sentiment
-
-Add optional cover-letter analysis as a soft signal.
-
-This should not replace objective candidate requirements and should remain separate from the primary screening score.
-
-## F3 — Blind Screening & Parity Dashboard
-
-Introduce optional blind screening features that hide selected identifying information during initial review.
-
-A parity dashboard could provide aggregate monitoring of screening outcomes and help identify potential disparities in the screening pipeline.
-
----
-
-# 33. Project Limitations
-
-The current implementation has several intentional limitations:
-
-- NLP is based on open-source models and deterministic matching rather than a large proprietary language model.
-- Skill extraction depends partly on the configured skill dictionary.
-- OCR quality depends on document quality and scan quality.
-- Resume formatting can affect extraction.
-- Experience calculation uses deterministic date/rule logic and can have limitations with ambiguous employment histories.
-- Title matching uses configured title families rather than semantic LLM reasoning.
-- The current scoring model is intentionally explainable rather than a learned ranking model.
-- The live 50-resume burst test was not executed because of AWS regional concurrency constraints.
-- The current solution is a technical screening aid and does not replace recruiter judgment.
-
----
-
-# 34. Licenses & Third-Party Components
-
-The project uses open-source libraries for document processing and NLP.
-
-Important third-party components include:
-
-- spaCy
-- PyMuPDF
-- pypdf
-- python-docx
-- Tesseract OCR
-
-Licensing requirements and limitations of third-party dependencies should be reviewed before commercial redistribution.
-
-In particular, PyMuPDF's AGPL licensing implications must be considered for deployment and distribution scenarios.
-
----
-
-# 35. Team
-
-### Parth Choutapelly
-
-Project lead / architecture / AWS infrastructure / integration / frontend / final sign-off
-
-### Allen Scott
-
-Testing and validation
-
-### Tejesh Geda
-
-Testing and validation
-
-### Gaurav Yewale
-
-Documentation and deliverables
-
----
-
-# 36. Project Phases
-
-## Phase 1 — Infrastructure
-
-Implemented:
-
-- AWS SAM infrastructure
-- S3
-- DynamoDB
-- SQS
-- DLQs
-- Cognito
-- SNS
-- Lambda foundations
-- IAM
-
-**Status: Completed and deployed**
-
----
-
-## Phase 2 — Ingestion Pipeline
-
-Implemented:
-
-- Real document extraction
-- PDF processing
-- DOCX processing
-- OCR
-- spaCy NLP
-- Skill extraction
-- Title extraction
-- Experience extraction
-- Failure handling
-
-**Status: Completed and deployed**
-
----
-
-## Phase 3 — Scoring, API & Reliability
-
-Implemented:
-
-- Candidate scoring
-- Scoring version `v1`
-- Recruiter REST API
-- Cognito authorization
-- CORS
-- DLQ handler
-- CloudWatch alarms
-- Recruiter decisions
-- CSV export
-
-**Status: Completed and deployed**
-
----
-
-## Phase 4 — Frontend Dashboard
-
-Implemented:
-
-- React recruiter dashboard
-- Authentication
-- Job pipeline
-- Job creation
-- Resume upload
-- Candidate ranking
-- Candidate details
-- Requirements editing
-- Recruiter decisions
-- CSV export
-- Admin failure view
-- CloudFront deployment
-
-**Status: Completed and deployed**
-
----
-
-## Phase 5 — Integration Testing & Delivery
-
-Implemented and verified:
-
-- Automated test gates
-- End-to-end integration
-- Failure matrix
-- Security verification
-- NLP evaluation
-- Accessibility testing
-- Load-test harness
-- Sample NLP outputs
-- Final documentation
-- Demo workflow
-
-**Status: Completed**
-
-The live 50-resume burst remains documented as a test limitation due to AWS regional concurrency constraints.
-
----
-
-# 37. Final Project Status
-
-```text
-╔══════════════════════════════════════════════════════╗
-║              PROJECT STATUS: COMPLETE               ║
-╠══════════════════════════════════════════════════════╣
-║ Infrastructure                  ✓                   ║
-║ Document Extraction             ✓                   ║
-║ OCR                             ✓                   ║
-║ NLP Processing                  ✓                   ║
-║ Candidate Scoring               ✓                   ║
-║ Recruiter API                   ✓                   ║
-║ Authentication                  ✓                   ║
-║ Frontend Dashboard              ✓                   ║
-║ CloudFront Deployment           ✓                   ║
-║ Failure Handling                ✓                   ║
-║ Security Verification           ✓                   ║
-║ NLP Evaluation                  ✓                   ║
-║ Accessibility                   ✓                   ║
-║ Integration Testing             ✓                   ║
-║ Documentation                   ✓                   ║
-║ Live 50-Resume Burst            Documented Limit.   ║
-╚══════════════════════════════════════════════════════╝
-```
-
----
-
-# 38. Documentation
-
-The complete project specification and implementation documentation is available under:
-
-```text
-docs/
-```
-
-Important documents:
-
-```text
-docs/Memory.md
-docs/PRD.md
-docs/Rules.md
-docs/Architecture.md
-
-docs/01-infrastructure-setup.md
-docs/02-ingestion-pipeline.md
-docs/03-scoring-and-api.md
-docs/04-frontend-dashboard.md
-docs/05-integration-testing-and-delivery.md
-
-docs/deliverables.md
-docs/evaluation.md
-docs/demo.md
-```
-
-Evidence generated during validation is stored under:
-
-```text
-docs/evidence/
-```
-
-Sample NLP outputs are stored under:
-
-```text
-docs/sample-nlp-output/
-```
-
----
-
-# 39. Quick Demo
-
-Open:
-
-https://d1yg427uu45noj.cloudfront.net
-
-Recommended flow:
-
-```text
-Login
-  ↓
-Jobs Pipeline
-  ↓
-Create New Requisition
-  ↓
-Cybersecurity Engineer
-  ↓
-Upload Demo Resumes
-  ↓
-Wait for Processing
-  ↓
-Open Candidates
-  ↓
-Review Scores
-  ↓
-Open Candidate Details
-  ↓
-Shortlist / Reject
-  ↓
-Export CSV
-```
-
----
-
-# 40. Summary
-
-The AI-Powered Resume Screener & Talent Acquisition Pipeline demonstrates a complete serverless recruitment workflow on AWS.
-
-The system combines:
-
-```text
-React
-   +
-AWS CloudFront
-   +
-Amazon Cognito
-   +
-API Gateway
-   +
-AWS Lambda
-   +
-Amazon S3
-   +
-Amazon SQS
-   +
-Amazon DynamoDB
-   +
-spaCy
-   +
-Tesseract OCR
-   +
-Amazon CloudWatch
-   +
-Amazon SNS / SES
-```
-
-to transform uploaded resumes into structured candidate profiles and explainable screening results.
-
-The project focuses on:
-
-- Real document processing
-- Genuine OCR
-- Practical NLP
-- Explainable scoring
-- Serverless AWS architecture
-- Secure recruiter workflows
-- Reliable asynchronous processing
-- Failure isolation
-- Operational monitoring
-- Human-in-the-loop decisions
-
-The result is an end-to-end recruitment screening platform that can be demonstrated through a live AWS deployment and extended with more advanced NLP, screening, and analytics capabilities in future iterations.
-```
-
+## 12. Further Documentation & Verification
+
+- **Evidence Manifest & Deliverables Index**: [`docs/evidence/README.md`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/README.md)
+- **CI/CD Evidence & 10-Attempt Audit History**: [`docs/evidence/ci-cd-pipeline-demo.md`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/ci-cd-pipeline-demo.md)
+- **3-Tier Cost Estimation Report**: [`docs/evidence/cost-estimation-3-tier-all-projects.md`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/cost-estimation-3-tier-all-projects.md)
+- **Artillery Load Test Report**: [`docs/evidence/load-test-report.md`](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/load-test-report.md)
+- **Project Runbooks**:
+  - [Project 1 Runbook (DocVault / CloudGuard)](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/runbook-project1-cloudguard.md)
+  - [Project 2 Runbook (VEYRA Onboarding)](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/runbook-project2-veyra-onboarding.md)
+  - [Project 3 Runbook (Smart Leave)](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/runbook-project3-smart-leave.md)
+  - [Project 4 Runbook (Resume Screener)](file:///Users/parthchoutapelly/Downloads/resume-screener/docs/evidence/runbook-project4-resume-screener.md)
